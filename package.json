@@ -1,0 +1,13 @@
+{
+  "name": "ai-video-interior",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "node tools/serve.mjs",
+    "check": "node tools/check-room.mjs",
+    "render": "node tools/render.mjs"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  }
+}

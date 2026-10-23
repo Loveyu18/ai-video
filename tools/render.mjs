@@ -1,0 +1,103 @@
+// 輸出影片：node tools/render.mjs [輸出.mp4] [--from=格] [--to=格] [--cpu]
+//   預設用 GPU（約 6 格/秒）；--cpu 改用 SwiftShader 軟體渲染（約 0.3 格/秒，沒有顯卡時用）
+//   預設輸出 output/tour.mp4（layout.VIDEO：1920×1080、30fps、60 秒）
+//   流程：無頭 Edge/Chrome 逐格渲染 → 每格 JPEG POST 回來 → 直接餵給 ffmpeg 壓成 H.264
+//   時間只由格數決定，所以每次輸出的影片一模一樣，也不會因為機器慢而掉格。
+import { execFile, spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { startServer } from './serve.mjs';
+import { VIDEO } from '../layout.js';
+
+const args = process.argv.slice(2);
+const opt = (name, def) => {
+  const a = args.find((x) => x.startsWith(`--${name}=`));
+  return a ? Number(a.split('=')[1]) : def;
+};
+const out = path.resolve(args.find((a) => !a.startsWith('--')) ?? 'output/tour.mp4');
+const total = Math.round(VIDEO.duration * VIDEO.fps);
+const from = opt('from', 0);
+const to = opt('to', total);
+const useGpu = !args.includes('--cpu');
+fs.mkdirSync(path.dirname(out), { recursive: true });
+
+const BROWSERS = [
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+];
+const browserPath = BROWSERS.find((p) => fs.existsSync(p));
+if (!browserPath) { console.error('找不到 Edge/Chrome'); process.exit(1); }
+
+// —— ffmpeg：從 stdin 收 JPEG 序列 ——
+const ffmpeg = spawn('ffmpeg', [
+  '-y', '-loglevel', 'error',
+  '-f', 'image2pipe', '-framerate', String(VIDEO.fps), '-c:v', 'mjpeg', '-i', '-',
+  '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+  out,
+], { stdio: ['pipe', 'inherit', 'inherit'] });
+
+let expected = from;
+let browser;
+const t0 = Date.now();
+let resolveDone;
+const done = new Promise((r) => { resolveDone = r; });
+
+const readBody = (req) => new Promise((r) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => r(Buffer.concat(chunks)));
+});
+
+const server = await startServer(0, (req, res) => {
+  const url = new URL(req.url, 'http://x');
+  if (req.method === 'POST' && url.pathname === '/frame') {
+    readBody(req).then((buf) => {
+      const i = Number(url.searchParams.get('i'));
+      if (i !== expected) { console.error(`\n畫格順序錯誤：收到 ${i}，預期 ${expected}`); process.exit(1); }
+      expected++;
+      const ok = ffmpeg.stdin.write(buf);
+      const reply = () => res.writeHead(204).end();
+      ok ? reply() : ffmpeg.stdin.once('drain', reply);
+      const n = i - from + 1;
+      if (n % 15 === 0 || i === to - 1) {
+        const sec = (Date.now() - t0) / 1000;
+        const eta = (sec / n) * (to - from - n);
+        process.stdout.write(`\r畫格 ${i + 1}/${to}  ${(n / sec).toFixed(2)} fps  剩約 ${Math.ceil(eta / 60)} 分   `);
+      }
+    });
+    return true;
+  }
+  if (req.method === 'POST' && url.pathname === '/done') {
+    readBody(req).then((buf) => {
+      res.writeHead(204).end();
+      const { errors } = JSON.parse(buf.toString() || '{}');
+      if (errors?.length) console.warn('\n場景錯誤：', errors);
+      resolveDone();
+    });
+    return true;
+  }
+  return false;
+});
+
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'render-'));
+const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}`;
+console.log(`輸出 ${out}\n格 ${from}~${to}（共 ${to - from} 格，${VIDEO.width}×${VIDEO.height} @ ${VIDEO.fps}fps）`);
+browser = execFile(browserPath, [
+  '--headless=new', '--hide-scrollbars', '--mute-audio',
+  ...(useGpu ? ['--enable-gpu', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']),
+  '--disable-gpu-sandbox', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+  `--user-data-dir=${profile}`, `--window-size=${VIDEO.width},${VIDEO.height}`, url,
+], { maxBuffer: 64 * 1024 * 1024 });
+
+await done;
+browser.kill();
+server.close();
+ffmpeg.stdin.end();
+ffmpeg.on('close', (code) => {
+  try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  const sec = ((Date.now() - t0) / 1000).toFixed(0);
+  if (code === 0) console.log(`\n完成：${out}（${sec} 秒）`);
+  else { console.error(`\nffmpeg 結束碼 ${code}`); process.exit(1); }
+});
