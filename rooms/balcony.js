@@ -10,11 +10,11 @@
  * 所有位置都由 layout.js 的房間內側邊界／開口／門掃掠區推出。
  */
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as L from '../layout.js';
 import { M } from '../materials.js';
 import { rngFor } from '../rng.js';
+import * as G from '../geo.js';
 
 const ROOM = 'balcony';
 const PI = Math.PI;
@@ -43,8 +43,56 @@ function xf(geo, p = [0, 0, 0], r = [0, 0, 0], s = [1, 1, 1], order = 'XYZ') {
   return geo;
 }
 
-const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const rbox = (w, h, d, r = 0.01, seg = 2) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2, h / 2, d / 2) * 0.999);
+/** 所有方塊都帶 3mm 倒角（近拍時接得住光） */
+const box = (w, h, d) => G.roundedBox(w, h, d, 0.003, 1);
+const rbox = (w, h, d, r = 0.01, seg = 2) => G.roundedBox(w, h, d, r, seg);
+
+/** 車削，正反兩面都建（不必管剖面方向，薄殼器物兩面都看得到） */
+function lathe2(profile, seg = 48) {
+  const a = G.lathe(profile, seg), b = G.lathe([...profile].reverse(), seg);
+  return merge([a, b]);
+}
+
+/** 圓角矩形框（中間挖空）倒角擠出：洗衣槽槽壁。底在 y=0 */
+function hollowExtrude(w, d, h, wall, r, bevel) {
+  const toV = (pts) => pts.map(([x, z]) => new THREE.Vector2(x, -z));
+  const shape = new THREE.Shape(toV(G.roundedRectShape(w - 2 * bevel, d - 2 * bevel, r)));
+  shape.holes.push(new THREE.Path(toV(G.roundedRectShape(w - 2 * wall, d - 2 * wall, Math.max(0.01, r - wall + bevel))).reverse()));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: h - 2 * bevel, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 12 });
+  geo.rotateX(-PI / 2);
+  geo.translate(0, bevel, 0);
+  return G.worldUV(geo);
+}
+
+/** 衣服肩線：依 |x| 往下斜（配合衣架形狀） */
+function bendShoulders(geo, half) {
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) - 0.07 * Math.pow(Math.min(1, Math.abs(p.getX(i)) / half), 1.5));
+  geo.computeVertexNormals();
+}
+
+/**
+ * 垂下部分的直向皺褶：axis 是布片垂掛的兩側方向（'z' → 前後片在 ±z）。
+ * 越往下越明顯，並加一點雜訊，讓每件不同。
+ */
+function hangFolds(geo, { axis = 'z', amp = 0.01, freq = 22, rng }) {
+  const noise = G.makeNoise(rng);
+  const ph = rng.range(0, 6);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const hang = Math.min(1, Math.max(0, (-y - 0.02) / 0.3));
+    if (hang <= 0) continue;
+    const along = axis === 'z' ? x : z;
+    const side = Math.sign(axis === 'z' ? z : x) || 1;
+    const d = amp * hang * (0.65 * Math.sin(along * freq + ph + (side > 0 ? 0 : 1.7)) + 0.6 * noise(along * 14, y * 3, side));
+    const sway = amp * 0.2 * hang * noise(y * 3 + 4, along * 3, side * 2);
+    if (axis === 'z') { p.setZ(i, z + side * d); p.setX(i, x + sway); }
+    else { p.setX(i, x + side * d); p.setZ(i, z + sway); }
+  }
+  geo.computeVertexNormals();
+  return G.worldUV(geo);
+}
 const cyl = (rt, rb, h, seg = 16) => new THREE.CylinderGeometry(rt, rb, h, seg);
 const tube = (pts, r, segs = 16, radial = 6) =>
   new THREE.TubeGeometry(pts.length === 3 ? new THREE.QuadraticBezierCurve3(...pts) : new THREE.CatmullRomCurve3(pts), segs, r, radial);
@@ -58,7 +106,7 @@ function merge(geos) {
     n.clearGroups();
     return n;
   });
-  return mergeGeometries(list, false);
+  return G.worldUV(mergeGeometries(list, false));
 }
 
 /** 依材質收集幾何，最後每種材質合併成一個 mesh */
@@ -167,15 +215,22 @@ const dirOf = (yaw) => [Math.cos(yaw), -Math.sin(yaw)]; // 對應 placeLeaf 的 
 
 /** 陶盆（車床旋轉剖面，有盆緣）＋土＋水盤；回傳土面高度 */
 function pot(b, { r, h, mat = M.terracotta, saucer = true }) {
-  const pts = [
-    [0, 0], [r * 0.72, 0], [r * 0.75, 0.01], [r * 0.95, h * 0.8], [r * 1.0, h * 0.81],
-    [r * 1.04, h * 0.83], [r * 1.04, h], [r * 0.93, h], [r * 0.9, h * 0.86], [r * 0.7, h * 0.12], [0, h * 0.12],
-  ].map(([x, y]) => new THREE.Vector2(x, y));
+  // 剖面：底足 → 外壁（微錐）→ 捲邊（向外翻的圓唇，有厚度）→ 內壁往下到土面
+  const t = Math.max(0.006, r * 0.07);              // 壁厚
+  const rr = Math.max(0.006, r * 0.085);            // 捲邊半徑
+  const cy = h - rr, cx = r * 0.96 + rr * 0.35;     // 捲邊圓心
+  const prof = [[0, 0.004], [r * 0.66, 0.004], [r * 0.7, 0], [r * 0.74, 0.008], [r * 0.76, 0.02], [r * 0.93, cy - rr * 1.6], [r * 0.95, cy - rr]];
+  for (let k = 0; k <= 12; k++) {
+    const th = -2.1 + (k / 12) * (PI + 0.35 + 2.1);   // 從下緣往外、繞過頂部、回到內側
+    prof.push([cx + rr * Math.cos(th), cy + rr * Math.sin(th)]);
+  }
+  prof.push([r * 0.95 - t, cy - rr * 1.8], [r * 0.9 - t, h * 0.86], [0, h * 0.86]);
   const soilY = h * 0.88;
-  b.add(mat, xf(new THREE.LatheGeometry(pts, 28), [0, saucer ? 0.018 : 0, 0]));
-  b.add(M.soil, xf(cyl(r * 0.9, r * 0.9, 0.01, 24), [0, (saucer ? 0.018 : 0) + soilY - 0.005, 0]));
-  if (saucer) b.add(mat, xf(cyl(r * 0.92, r * 0.82, 0.018, 24), [0, 0.009, 0]));
-  return soilY + (saucer ? 0.018 : 0);
+  const y0 = saucer ? 0.018 : 0;
+  b.add(mat, xf(G.lathe(prof, 40), [0, y0, 0]));
+  b.add(M.soil, xf(G.lathe([[r * 0.95 - t, 0], [r * 0.95 - t, 0.004], [r * 0.6, 0.014], [0, 0.012]], 32), [0, y0 + soilY - 0.012, 0]));
+  if (saucer) b.add(mat, G.lathe([[0, 0], [r * 0.84, 0], [r * 0.9, 0.002], [r * 0.95, 0.016], [r * 0.95, 0.019], [r * 0.92, 0.019], [r * 0.88, 0.008], [0, 0.008]], 32));
+  return soilY + y0;
 }
 
 /** 散開的觀葉植物（白鶴芋／黃金葛類） */
@@ -232,8 +287,8 @@ export function build() {
     b.add(M.tileWallWhite, xf(box(tx1 - tx0, ty1, T), [(tx0 + tx1) / 2, ty1 / 2, Z0 + T / 2]));
     const grout = new Bucket();
     const TILE = 0.15;
-    for (let y = TILE; y < ty1; y += TILE) grout.add(M.groutLight, xf(box(tx1 - tx0, 0.003, 0.002), [(tx0 + tx1) / 2, y, Z0 + T + 0.001]));
-    for (let x = tx1 - TILE; x > tx0; x -= TILE) grout.add(M.groutLight, xf(box(0.003, ty1, 0.002), [x, ty1 / 2, Z0 + T + 0.001]));
+    for (let y = TILE; y < ty1; y += TILE) grout.add(M.groutLight, xf(new THREE.BoxGeometry(tx1 - tx0, 0.003, 0.002), [(tx0 + tx1) / 2, y, Z0 + T + 0.001]));
+    for (let x = tx1 - TILE; x > tx0; x -= TILE) grout.add(M.groutLight, xf(new THREE.BoxGeometry(0.003, ty1, 0.002), [x, ty1 / 2, Z0 + T + 0.001]));
     // 壁磚收邊條
     b.add(M.metalAluminium, xf(box(tx1 - tx0, 0.012, 0.014), [(tx0 + tx1) / 2, ty1 + 0.006, Z0 + 0.007]));
     root.add(b.build('backsplash', { cast: false }), grout.build('backsplashGrout', { cast: false }));
@@ -244,96 +299,98 @@ export function build() {
     const g = new THREE.Group();
     g.name = `${ROOM}:washer`;
     const fz = WASH.d / 2; // 前面（本地 +z）
-    const body = mesh(rbox(WASH.w, WASH.h - 0.02, WASH.d, 0.035, 3), M.plasticWhite, 'washer');
+    const body = mesh(G.roundedBox(WASH.w, WASH.h - 0.02, WASH.d, 0.045, 5), M.plasticWhite, 'washer');
     body.position.y = 0.02 + (WASH.h - 0.02) / 2;
     g.add(body);
     const b = new Bucket();
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add(M.rubber, xf(cyl(0.025, 0.028, 0.02, 12), [sx * (WASH.w / 2 - 0.06), 0.01, sz * (WASH.d / 2 - 0.06)]));
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add(M.rubber, xf(G.lathe([[0, 0], [0.026, 0], [0.028, 0.004], [0.028, 0.016], [0.022, 0.02], [0, 0.02]], 20), [sx * (WASH.w / 2 - 0.06), 0, sz * (WASH.d / 2 - 0.06)]));
     const doorY = 0.4;
-    // 門圈、玻璃、滾筒
-    b.add(M.metalChrome, xf(new THREE.TorusGeometry(0.19, 0.028, 14, 48), [0, doorY, fz + 0.03]));
-    b.add(M.plasticBlack, xf(cyl(0.2, 0.215, 0.025, 48), [0, doorY, fz + 0.012], [PI / 2, 0, 0]));
-    b.add(M.rubber, xf(new THREE.TorusGeometry(0.155, 0.014, 10, 40), [0, doorY, fz + 0.022]));
-    b.add(M.metalBrushed, xf(cyl(0.15, 0.15, 0.004, 40), [0, doorY, fz + 0.026], [PI / 2, 0, 0]));
+    // 車削零件朝前：lathe 的高度軸（y）轉成 +z
+    const front = (geo, dz = 0) => xf(geo, [0, doorY, fz + dz], [PI / 2, 0, 0]);
+    // 門框底座（深灰圓盤，讓門圈浮出機身）
+    b.add(M.plasticBlack, front(lathe2([[0.235, 0], [0.235, 0.004], [0.228, 0.008], [0, 0.008]])));
+    // 滾筒：淺碗形不鏽鋼＋三支撥水條
+    b.add(M.metalBrushed, front(lathe2([[0.168, 0.008], [0.165, 0.014], [0.15, 0.02], [0.12, 0.022], [0, 0.023]])));
     for (let k = 0; k < 3; k++) {
       const a = (k / 3) * 2 * PI + 0.4;
-      b.add(M.plasticWhite, xf(box(0.06, 0.02, 0.012), [Math.cos(a) * 0.12, doorY + Math.sin(a) * 0.12, fz + 0.032], [0, 0, a]));
+      b.add(M.metalBrushed, xf(G.roundedBox(0.05, 0.016, 0.012, 0.005), [Math.cos(a) * 0.125, doorY + Math.sin(a) * 0.125, fz + 0.028], [0, 0, a]));
     }
-    // 滾筒裡的衣服
-    b.add(M.fabricLinen, xf(new THREE.SphereGeometry(1, 14, 10), [0.02, doorY - 0.07, fz + 0.03], [0.3, 0, 0.2], [0.12, 0.06, 0.012]));
-    b.add(M.fabricWhite, xf(new THREE.SphereGeometry(1, 14, 10), [-0.05, doorY - 0.1, fz + 0.034], [0, 0, -0.4], [0.08, 0.04, 0.01]));
-    b.add(M.metalChrome, xf(rbox(0.035, 0.11, 0.03, 0.01), [0.215, doorY, fz + 0.025]));
+    const lr = rng.fork('drumLaundry');
+    // 橡膠氣密圈
+    const ring = (r, n = 48) => Array.from({ length: n }, (_, i) => [Math.cos((i / n) * 2 * PI) * r, Math.sin((i / n) * 2 * PI) * r, 0]);
+    b.add(M.rubber, xf(G.tube(ring(0.166), 0.011, { segments: 64, radial: 10, closed: true }), [0, doorY, fz + 0.022]));
+    // 鉻色門圈（有厚度的弧面）＋玻璃視窗
+    b.add(M.metalChrome, front(lathe2([[0.224, 0.006], [0.226, 0.022], [0.218, 0.038], [0.2, 0.048], [0.178, 0.048], [0.165, 0.042], [0.16, 0.03]], 64)));
+    b.add(M.glass, front(lathe2([[0.172, 0.042], [0.14, 0.05], [0.08, 0.056], [0, 0.058]], 48)));
+    // 門把（嵌在門圈右側）
+    b.add(M.metalChrome, xf(G.roundedBox(0.03, 0.12, 0.03, 0.012, 3), [0.228, doorY, fz + 0.03]));
     // 控制面板
     const py = WASH.h - 0.085;
-    b.add(M.plasticWhite, xf(rbox(WASH.w - 0.04, 0.11, 0.02, 0.008), [0, py, fz + 0.002]));
-    b.add(M.plasticWhite, xf(rbox(0.17, 0.075, 0.02, 0.006), [-0.19, py, fz + 0.012]));
-    b.add(M.plasticBlack, xf(box(0.08, 0.01, 0.004), [-0.19, py - 0.022, fz + 0.022]));
-    b.add(M.screenOff, xf(box(0.11, 0.045, 0.004), [0.06, py, fz + 0.013]));
-    b.add(M.metalChrome, xf(cyl(0.035, 0.038, 0.03, 32), [0.2, py, fz + 0.02], [PI / 2, 0, 0]));
-    b.add(M.plasticBlack, xf(box(0.006, 0.03, 0.006), [0.2, py + 0.015, fz + 0.037]));
-    for (let k = 0; k < 4; k++) b.add(M.plasticBlack, xf(cyl(0.007, 0.007, 0.006, 10), [-0.02 + k * 0.035 - 0.02, py - 0.035, fz + 0.014], [PI / 2, 0, 0]));
-    b.add(M.ledStrip, xf(box(0.02, 0.006, 0.003), [0.06, py + 0.034, fz + 0.013]));
-    // 機頂：疊好的毛巾＋洗衣精量杯
-    b.add(M.fabricWhite, xf(rbox(0.32, 0.05, 0.22, 0.02), [-0.08, WASH.h + 0.025, -0.02], [0, 0.08, 0]));
-    b.add(M.fabricOat, xf(rbox(0.3, 0.045, 0.2, 0.02), [-0.07, WASH.h + 0.072, -0.03], [0, -0.05, 0]));
-    b.add(M.plasticWhite, xf(cyl(0.035, 0.028, 0.06, 16), [0.18, WASH.h + 0.03, 0.12]));
+    b.add(M.plasticWhite, xf(G.roundedBox(WASH.w - 0.06, 0.11, 0.016, 0.006), [0, py, fz + 0.002]));
+    b.add(M.plasticWhite, xf(G.roundedBox(0.17, 0.075, 0.02, 0.008), [-0.19, py, fz + 0.012]));
+    b.add(M.plasticBlack, xf(G.roundedBox(0.08, 0.01, 0.004, 0.0015), [-0.19, py - 0.022, fz + 0.022]));
+    b.add(M.screenOff, xf(G.roundedBox(0.11, 0.045, 0.006, 0.003), [0.06, py, fz + 0.012]));
+    b.add(M.metalChrome, xf(lathe2([[0.04, 0], [0.038, 0.004], [0.036, 0.026], [0.03, 0.032], [0, 0.032]], 40), [0.2, py, fz + 0.008], [PI / 2, 0, 0]));
+    b.add(M.plasticBlack, xf(G.roundedBox(0.006, 0.026, 0.004, 0.0015), [0.2, py + 0.016, fz + 0.042]));
+    for (let k = 0; k < 4; k++) b.add(M.metalChrome, xf(G.lathe([[0.008, 0], [0.007, 0.006], [0, 0.006]], 16), [-0.04 + k * 0.035, py - 0.035, fz + 0.01], [PI / 2, 0, 0]));
+    b.add(M.ledStrip, xf(G.roundedBox(0.02, 0.006, 0.003, 0.001), [0.06, py + 0.034, fz + 0.014]));
+    // 機頂：疊好的毛巾（坐墊造型）＋量杯
+    b.add(M.fabricWhite, xf(G.mattress(0.32, 0.05, 0.22, { radius: 0.02, crown: 0.006, wrinkle: 0.002, rng: lr.fork('t1') }), [-0.08, WASH.h + 0.025, -0.02], [0, 0.08, 0]));
+    b.add(M.fabricOat, xf(G.mattress(0.3, 0.045, 0.2, { radius: 0.02, crown: 0.006, wrinkle: 0.002, rng: lr.fork('t2') }), [-0.07, WASH.h + 0.073, -0.03], [0, -0.05, 0]));
+    b.add(M.plasticWhite, xf(lathe2([[0, 0], [0.028, 0], [0.036, 0.06], [0.033, 0.06], [0.026, 0.004], [0, 0.004]], 24), [0.18, WASH.h, 0.12]));
     // 後方進水管＋排水管（排水管跨到洗衣槽裡）
-    b.add(M.rubber, tube([V3(-WASH.w / 2 + 0.08, WASH.h - 0.1, -WASH.d / 2 - 0.02), V3(-WASH.w / 2 + 0.04, WASH.h + 0.12, -WASH.d / 2 + 0.02), V3(-WASH.w / 2 - 0.12, SINK.top + 0.04, -WASH.d / 2 + 0.12), V3(-WASH.w / 2 - 0.2, SINK.top - 0.06, -WASH.d / 2 + 0.16)], 0.011, 24, 8));
-    b.add(M.paintWhite, tube([V3(0.2, WASH.h - 0.05, -WASH.d / 2 - 0.02), V3(0.2, WASH.h + 0.12, -WASH.d / 2 - 0.035), V3(0.22, 1.08, -WASH.d / 2 - 0.045)], 0.008, 12, 6));
+    b.add(M.rubber, G.tube([[-WASH.w / 2 + 0.08, WASH.h - 0.1, -WASH.d / 2 - 0.02], [-WASH.w / 2 + 0.04, WASH.h + 0.12, -WASH.d / 2 + 0.02], [-WASH.w / 2 - 0.12, SINK.top + 0.04, -WASH.d / 2 + 0.12], [-WASH.w / 2 - 0.2, SINK.top - 0.06, -WASH.d / 2 + 0.16]], 0.011, { segments: 40, radial: 10 }));
+    b.add(M.paintWhite, G.tube([[0.2, WASH.h - 0.05, -WASH.d / 2 - 0.02], [0.2, WASH.h + 0.12, -WASH.d / 2 - 0.035], [0.22, 1.08, -WASH.d / 2 - 0.045]], 0.008, { segments: 24, radial: 8 }));
     g.add(b.build('washerParts'));
     at(g, washer.x, 0, washer.z);
     // 水龍頭（洗衣機進水）
     const v = new Bucket();
-    v.add(M.metalChrome, xf(cyl(0.012, 0.012, 0.05, 12), [washer.x + 0.22, 1.1, Z0 + 0.033], [PI / 2, 0, 0]));
-    v.add(M.metalChrome, xf(cyl(0.015, 0.015, 0.03, 12), [washer.x + 0.22, 1.1, Z0 + 0.06]));
-    v.add(M.metalChrome, xf(box(0.05, 0.008, 0.012), [washer.x + 0.22, 1.12, Z0 + 0.06]));
+    const tx = washer.x + 0.22;
+    v.add(M.metalChrome, xf(G.lathe([[0.028, 0], [0.028, 0.006], [0.014, 0.012], [0.012, 0.05], [0.016, 0.055], [0.016, 0.075], [0, 0.075]], 24), [tx, 1.1, Z0], [PI / 2, 0, 0]));
+    v.add(M.metalChrome, G.tube([[tx, 1.1, Z0 + 0.06], [tx, 1.13, Z0 + 0.06], [tx + 0.05, 1.14, Z0 + 0.06]], 0.005, { segments: 12, radial: 8 }));
     root.add(v.build('washerTap'));
   }
 
-  // ═════════════════ 洗衣槽（附洗衣板）＋架子 ═════════════════
+  // ═════════════════ 洗衣槽（倒角擠出槽體，內部凹陷）＋架子 ═════════════════
   {
     const b = new Bucket();
     const { w, d, top } = SINK;
-    const bh = 0.25, t = 0.03, y0 = top - bh;
-    // 不鏽鋼腳架＋下層木板
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add(M.metalChrome, xf(box(0.03, y0, 0.03), [sx * (w / 2 - 0.035), y0 / 2, sz * (d / 2 - 0.035)]));
-    for (const sx of [-1, 1]) b.add(M.metalChrome, xf(box(0.02, 0.02, d - 0.07), [sx * (w / 2 - 0.035), 0.16, 0]));
-    for (let k = 0; k < 5; k++) b.add(M.woodOak, xf(box(w - 0.06, 0.018, 0.065), [0, 0.18, -d / 2 + 0.07 + k * 0.08]));
-    // 陶瓷槽體
-    b.add(M.ceramicWhite, xf(rbox(w, t, d, 0.01), [0, y0 + t / 2, 0]));
-    b.add(M.ceramicWhite, xf(rbox(w, bh, t, 0.012), [0, y0 + bh / 2, -d / 2 + t / 2]));
-    b.add(M.ceramicWhite, xf(rbox(w, bh, t, 0.012), [0, y0 + bh / 2, d / 2 - t / 2]));
-    for (const sx of [-1, 1]) b.add(M.ceramicWhite, xf(rbox(t, bh, d, 0.012), [sx * (w / 2 - t / 2), y0 + bh / 2, 0]));
+    const bh = 0.25, t = 0.035, y0 = top - bh;
+    // 不鏽鋼腳架（圓管）＋下層木板
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add(M.metalChrome, xf(G.lathe([[0.014, 0], [0.015, 0.01], [0.015, y0], [0, y0]], 16), [sx * (w / 2 - 0.035), 0, sz * (d / 2 - 0.035)]));
+    for (const sx of [-1, 1]) b.add(M.metalChrome, G.tube([[sx * (w / 2 - 0.035), 0.16, -d / 2 + 0.035], [sx * (w / 2 - 0.035), 0.16, d / 2 - 0.035]], 0.009, { segments: 2, radial: 10 }));
+    for (let k = 0; k < 5; k++) b.add(M.woodOak, xf(G.roundedBox(w - 0.06, 0.018, 0.065, 0.004), [0, 0.18, -d / 2 + 0.07 + k * 0.08]));
+    // 陶瓷槽體：底板＋挖空的圓角框（壁厚 t、上緣倒角）
+    b.add(M.ceramicWhite, xf(G.extrudeRounded(G.roundedRectShape(w - 0.018, d - 0.018, 0.03), 0.035, 0.008), [0, y0, 0]));
+    b.add(M.ceramicWhite, xf(hollowExtrude(w, d, bh - 0.02, t, 0.04, 0.008), [0, y0 + 0.02, 0]));
     // 洗衣板：前半段斜面＋橫紋
     const wbLen = 0.22, ang = 0.62;
-    const wb = [];
-    wb.push(box(w - 2 * t, 0.02, wbLen));
-    for (let k = 0; k < 9; k++) wb.push(xf(cyl(0.006, 0.006, w - 2 * t - 0.02, 8), [0, 0.012, -wbLen / 2 + 0.02 + k * 0.022], [0, 0, PI / 2]));
+    const wb = [G.roundedBox(w - 2 * t, 0.02, wbLen, 0.006)];
+    for (let k = 0; k < 9; k++) wb.push(xf(G.tube([[-(w - 2 * t - 0.03) / 2, 0, 0], [(w - 2 * t - 0.03) / 2, 0, 0]], 0.006, { segments: 2, radial: 8 }), [0, 0.011, -wbLen / 2 + 0.02 + k * 0.022]));
     const wbz = d / 2 - t - (wbLen * Math.cos(ang)) / 2, wby = top - 0.02 - (wbLen * Math.sin(ang)) / 2;
     for (const g of wb) b.add(M.ceramicWhite, xf(g, [0, wby, wbz], [-ang, 0, 0]));
-    b.add(M.metalChrome, xf(cyl(0.025, 0.025, 0.004, 20), [0, y0 + t + 0.002, -d / 2 + 0.1]));
-    b.add(M.paintCream, xf(rbox(0.08, 0.025, 0.05, 0.01), [0.08, wby + 0.03, wbz], [-ang, 0.3, 0])); // 肥皂
+    b.add(M.metalChrome, xf(G.lathe([[0.027, 0], [0.022, 0.002], [0, 0.002]], 24), [0, y0 + 0.035, -d / 2 + 0.1]));
+    b.add(M.paintCream, xf(G.mattress(0.08, 0.025, 0.05, { radius: 0.01, crown: 0.003 }), [0.08, wby + 0.03, wbz], [-ang, 0.3, 0])); // 肥皂
     // 刷子
-    b.add(M.woodOak, xf(rbox(0.12, 0.025, 0.05, 0.01), [-w / 2 + 0.05, top + 0.035, 0.02], [0, 0.4, 0]));
-    b.add(M.fabricOat, xf(box(0.11, 0.025, 0.045), [-w / 2 + 0.05, top + 0.012, 0.02], [0, 0.4, 0]));
+    b.add(M.woodOak, xf(G.roundedBox(0.12, 0.025, 0.05, 0.01), [-w / 2 + 0.05, top + 0.035, 0.02], [0, 0.4, 0]));
+    b.add(M.fabricOat, xf(G.roundedBox(0.11, 0.025, 0.045, 0.003), [-w / 2 + 0.05, top + 0.012, 0.02], [0, 0.4, 0]));
     // 下層：水桶＋抹布
-    const pail = [[0, 0], [0.1, 0], [0.12, 0.2], [0.125, 0.205], [0.112, 0.205], [0.092, 0.012], [0, 0.012]].map(([x, y]) => new THREE.Vector2(x, y));
-    b.add(M.plasticSage, xf(new THREE.LatheGeometry(pail, 24), [-0.08, 0.19, 0.02]));
-    b.add(M.metalChrome, xf(new THREE.TorusGeometry(0.12, 0.003, 6, 24, PI), [-0.08, 0.395, 0.02], [0, 0.6, 0]));
-    b.add(M.fabricOat, xf(rbox(0.16, 0.012, 0.12, 0.005), [0.14, 0.198, 0.04], [0, 0.3, 0]));
+    b.add(M.plasticSage, xf(lathe2([[0, 0], [0.1, 0], [0.12, 0.2], [0.126, 0.205], [0.124, 0.21], [0.114, 0.207], [0.093, 0.012], [0, 0.012]], 32), [-0.08, 0.19, 0.02]));
+    b.add(M.metalChrome, xf(new THREE.TorusGeometry(0.12, 0.003, 6, 24, PI), [-0.08, 0.4, 0.02], [0, 0.6, 0]));
+    b.add(M.fabricOat, xf(G.drapeOver({ w: 0.1, d: 0.08, overhang: { x0: 0.05, z1: 0.03 }, thickness: 0.004, wrinkle: 0.006, edgeRadius: 0.006, rng: rng.fork('rag'), res: 0.015 }), [0.14, 0.195, 0.04], [0, 0.3, 0]));
     // 壁掛水龍頭
     const fy = top + 0.24, fz0 = -d / 2;
-    b.add(M.metalChrome, xf(cyl(0.028, 0.028, 0.012, 20), [0, fy, fz0 + 0.014], [PI / 2, 0, 0]));
-    b.add(M.metalChrome, tube([V3(0, fy, fz0 + 0.01), V3(0, fy + 0.02, fz0 + 0.16), V3(0, fy - 0.08, fz0 + 0.17)], 0.011, 16, 10));
-    b.add(M.metalChrome, xf(cyl(0.014, 0.011, 0.03, 12), [0, fy - 0.09, fz0 + 0.17]));
-    b.add(M.metalChrome, xf(cyl(0.012, 0.012, 0.05, 12), [0, fy + 0.035, fz0 + 0.05]));
-    b.add(M.metalChrome, xf(rbox(0.09, 0.012, 0.018, 0.005), [0, fy + 0.065, fz0 + 0.05]));
+    b.add(M.metalChrome, xf(G.lathe([[0.03, 0], [0.03, 0.006], [0.02, 0.012], [0.012, 0.02], [0, 0.02]], 32), [0, fy, fz0], [PI / 2, 0, 0]));
+    b.add(M.metalChrome, G.tube([[0, fy, fz0 + 0.01], [0, fy + 0.012, fz0 + 0.1], [0, fy - 0.01, fz0 + 0.165], [0, fy - 0.08, fz0 + 0.175]], 0.011, { segments: 32, radial: 12 }));
+    b.add(M.metalChrome, xf(G.lathe([[0, 0], [0.012, 0], [0.014, 0.004], [0.012, 0.025], [0, 0.025]], 20), [0, fy - 0.1, fz0 + 0.175]));
+    b.add(M.metalChrome, xf(G.lathe([[0.016, 0], [0.012, 0.04], [0, 0.04]], 20), [0, fy + 0.012, fz0 + 0.05]));
+    b.add(M.metalChrome, xf(G.roundedBox(0.09, 0.012, 0.018, 0.005), [0.02, fy + 0.058, fz0 + 0.05], [0, 0, 0.1]));
     const g = b.build('laundrySink');
     at(g, sink.x, 0, sink.z);
     // 地上排水孔
     const dr = new Bucket();
-    dr.add(M.metalChrome, box(0.12, 0.004, 0.12));
-    for (let k = -2; k <= 2; k++) dr.add(M.stoneDark, xf(box(0.09, 0.002, 0.008), [0, 0.002, k * 0.02]));
+    dr.add(M.metalChrome, G.roundedBox(0.12, 0.004, 0.12, 0.0015));
+    for (let k = -2; k <= 2; k++) dr.add(M.stoneDark, xf(G.roundedBox(0.09, 0.002, 0.008, 0.0009), [0, 0.002, k * 0.02]));
     at(dr.build('floorDrain', { cast: false }), sink.x - SINK.w / 2 - 0.02, 0.002, sink.z + SINK.d / 2 + 0.12);
   }
 
@@ -417,81 +474,97 @@ export function build() {
   }
 
   const crng = rng.fork('clothes');
-  /** 掛衣架（木製肩架＋鉻鉤），本地原點＝桿中心，衣架平面＝xy（垂直於桿） */
-  const hangerGeos = (b, width = 0.4) => {
-    b.add(M.metalChrome, tube([V3(0, -0.075, 0), V3(0, -0.035, 0), V3(0.02, -0.005, 0), V3(0.006, 0.024, 0), V3(-0.018, 0.012, 0), V3(-0.022, -0.008, 0)], 0.0025, 20, 5));
-    b.add(M.woodOak, tube([V3(-width / 2, -0.15, 0), V3(0, -0.06, 0), V3(width / 2, -0.15, 0)], 0.008, 20, 6));
-    b.add(M.woodOak, xf(rbox(0.04, 0.025, 0.02, 0.006), [0, -0.075, 0]));
-  };
-  const SHIRT = [[-0.075, 0], [-0.19, -0.035], [-0.3, -0.21], [-0.22, -0.265], [-0.18, -0.21], [-0.2, -0.68], [0.2, -0.68], [0.18, -0.21], [0.22, -0.265], [0.3, -0.21], [0.19, -0.035], [0.075, 0], [0.04, -0.035], [0, -0.05], [-0.04, -0.035]];
+  /** 鉻色掛鉤：本地原點＝桿中心，鉤子繞過桿頂，衣架平面＝xy（垂直於桿） */
+  const hook = (b, drop) => b.add(M.metalChrome, G.tube([[0, -drop, 0], [0, -0.04, 0], [0.019, -0.012, 0], [0.016, 0.014, 0], [0, 0.024, 0], [-0.017, 0.012, 0], [-0.02, -0.006, 0]], 0.0025, { segments: 40, radial: 6 }));
+  const SLOPE = 0.07;                     // 衣架肩線下斜量
+  const shoulderY = (x, half) => -SLOPE * Math.pow(Math.min(1, Math.abs(x) / half), 1.5);
+
+  /** T 恤：drapeOver 掛在衣架肩線上，前後片沿 ±z 垂下＋兩袖＋領口 */
   const tshirt = (name, x, z, mat, s = 1, yaw = 0) => {
+    const r = crng.fork(name);
     const b = new Bucket();
-    hangerGeos(b, 0.4 * s);
-    const ph = crng.range(0, 6), amp = crng.range(0.008, 0.02), sway = crng.jitter(0, 0.03);
-    const W = 0.62 * s, Hh = 0.7 * s;
-    b.add(mat, xf(clothSheet(24, 28, (u, v) => {
-      const lx = (u - 0.5) * W, ly = -v * Hh;
-      return V3(lx, ly, amp * Math.sin(lx * 18 + ph) * (0.3 + v) + sway * v * v + 0.01 * Math.sin(v * 9 + ph) * Math.abs(lx) * 3);
-    }, (u, v) => inPoly(SHIRT, ((u - 0.5) * W) / s, (-v * Hh) / s), 0.005), [0, -0.068, 0]));
-    const g = b.build(name);
-    at(g, x, ROD_Y, z, yaw);
-  };
-  const PANTS = [[-0.19, 0], [0.19, 0], [0.22, -0.92], [0.035, -0.92], [0, -0.3], [-0.035, -0.92], [-0.22, -0.92]];
-  const pants = (name, x, z, mat) => {
-    const b = new Bucket();
-    b.add(M.metalChrome, tube([V3(0, -0.06, 0), V3(0, -0.03, 0), V3(0.02, -0.005, 0), V3(0.006, 0.024, 0), V3(-0.018, 0.012, 0), V3(-0.022, -0.008, 0)], 0.0025, 20, 5));
-    b.add(M.plasticBlack, xf(rbox(0.4, 0.02, 0.012, 0.004), [0, -0.07, 0]));
-    for (const sx of [-1, 1]) b.add(M.plasticBlack, xf(rbox(0.03, 0.05, 0.02, 0.005), [sx * 0.15, -0.095, 0]));
-    const ph = crng.range(0, 6);
-    b.add(mat, xf(clothSheet(20, 36, (u, v) => {
-      const lx = (u - 0.5) * 0.46, ly = -v * 0.94;
-      return V3(lx, ly, 0.012 * Math.sin(lx * 14 + ph) * (0.2 + v) + 0.02 * v * v);
-    }, (u, v) => inPoly(PANTS, (u - 0.5) * 0.46, -v * 0.94), 0.006), [0, -0.1, 0]));
-    // 腰帶反摺
-    b.add(mat, xf(rbox(0.38, 0.04, 0.012, 0.004), [0, -0.12, 0]));
-    at(b.build(name), x, ROD_Y, z);
-  };
-  /** 毛巾跨在桿上：前垂 a、後垂 bLen，寬度沿桿（z） */
-  const towel = (name, x, z, mat, width, a, bLen, stripeMat) => {
-    const b = new Bucket();
-    const r = 0.02, arc = PI * r, total = a + arc + bLen;
-    const ph = crng.range(0, 6);
-    const path = (s) => {
-      if (s < a) return [r, -(a - s)];
-      if (s < a + arc) { const th = (s - a) / r; return [r * Math.cos(th), r * Math.sin(th)]; }
-      return [-r, -(s - a - arc)];
-    };
-    b.add(mat, clothSheet(30, 10, (u, v) => {
-      const [px, py] = path(u * total);
-      const hang = Math.max(0, -py);
-      const lz = (v - 0.5) * width;
-      return V3(px + Math.sign(px) * 0.012 * Math.sin(lz * 20 + ph) * hang * 2, py, lz + 0.01 * Math.sin(py * 6 + ph) * hang);
-    }, () => true, 0.007));
-    if (stripeMat) for (const s of [a - 0.06, a - 0.08]) {
-      b.add(stripeMat, xf(box(0.002, 0.012, width), [r + 0.0045, -(a - s), 0]));
+    const half = 0.2 * s, len = 0.6 * s, top = -0.075;
+    hook(b, 0.075);
+    // 木衣架（藏在衣服裡，肩端露一點）
+    b.add(M.woodOak, G.tube(Array.from({ length: 9 }, (_, i) => { const xx = -half - 0.01 + ((2 * half + 0.02) * i) / 8; return [xx, top - 0.02 + shoulderY(xx, half + 0.01), 0]; }), 0.008, { segments: 32, radial: 8 }));
+    // 前後片
+    const body = G.drapeOver({ w: 2 * half, d: 0.03, overhang: { z0: len, z1: len }, thickness: 0.006, wrinkle: 0.01, edgeRadius: 0.014, rng: r.fork('body'), res: 0.022, flare: 0.035 });
+    bendShoulders(body, half);
+    hangFolds(body, { axis: 'z', amp: 0.01, freq: 26, rng: r.fork('folds') });
+    b.add(mat, xf(body, [0, top, 0]));
+    // 兩袖：短 drape，往外下斜
+    for (const sx of [-1, 1]) {
+      const sl = G.drapeOver({ w: 0.11 * s, d: 0.034, overhang: { z0: 0.15 * s, z1: 0.15 * s }, thickness: 0.006, wrinkle: 0.008, edgeRadius: 0.014, rng: r.fork(`sleeve${sx}`), res: 0.018, flare: 0.03 });
+      hangFolds(sl, { axis: 'z', amp: 0.006, freq: 30, rng: r.fork(`sf${sx}`) });
+      b.add(mat, xf(sl, [sx * (half + 0.035 * s), top - SLOPE - 0.012, 0], [0, 0, -sx * 0.55]));
     }
+    // 圓領：一圈收邊
+    const n = 24;
+    b.add(mat, G.tube(Array.from({ length: n }, (_, i) => { const a = (i / n) * 2 * PI; return [Math.cos(a) * 0.07 * s, top + 0.004 - 0.012 * Math.max(0, Math.sin(a)), Math.sin(a) * 0.024]; }), 0.007, { segments: 48, radial: 8, closed: true }));
+    at(b.build(name), x, ROD_Y, z, yaw);
+  };
+
+  /** 長褲：對折跨在鐵線衣架的橫桿上 */
+  const pants = (name, x, z, mat) => {
+    const r = crng.fork(name);
+    const b = new Bucket();
+    hook(b, 0.075);
+    const by = -0.17;
+    b.add(M.metalChrome, G.tube([[0, -0.075, 0], [-0.1, -0.12, 0], [-0.205, by + 0.004, 0], [-0.2, by, 0], [0.2, by, 0], [0.205, by + 0.004, 0], [0.1, -0.12, 0], [0, -0.075, 0]], 0.0025, { segments: 64, radial: 6 }));
+    const p = G.drapeOver({ w: 0.36, d: 0.024, overhang: { z0: 0.44, z1: 0.48, x0: 0.01, x1: 0.01 }, thickness: 0.008, wrinkle: 0.012, edgeRadius: 0.012, rng: r.fork('p'), res: 0.018, flare: 0.03 });
+    hangFolds(p, { axis: 'z', amp: 0.008, freq: 18, rng: r.fork('f') });
+    // 兩褲管之間的分隙：中線往內收一點
+    const pp = p.attributes.position;
+    for (let i = 0; i < pp.count; i++) {
+      const yy = pp.getY(i), xx = pp.getX(i);
+      const t = Math.min(1, Math.max(0, (-yy - 0.15) / 0.25));
+      const k = Math.exp(-((xx / 0.025) ** 2)) * t;
+      pp.setZ(i, pp.getZ(i) * (1 - 0.45 * k));
+    }
+    p.computeVertexNormals();
+    b.add(mat, xf(p, [0, by + 0.003 + 0.0125, 0]));
     at(b.build(name), x, ROD_Y, z);
   };
-  /** 圓形襪子夾 */
+
+  /** 毛巾：跨在桿上，前後不等長垂下，寬度沿桿（z） */
+  const towel = (name, x, z, mat, width, a, bLen) => {
+    const r = crng.fork(name);
+    const b = new Bucket();
+    const t = G.drapeOver({ w: 0.03, d: width, overhang: { x0: bLen, x1: a }, thickness: 0.009, wrinkle: 0.014, edgeRadius: 0.016, rng: r.fork('t'), res: 0.018, flare: 0.03 });
+    hangFolds(t, { axis: 'x', amp: 0.02, freq: 12, rng: r.fork('f') });
+    b.add(mat, t);
+    at(b.build(name), x, ROD_Y + 0.016, z);
+  };
+
+  /** 圓形襪子夾：襪子夾在夾子上自然垂下 */
   const sockRing = (name, x, z) => {
+    const r = crng.fork(name);
     const b = new Bucket();
     const ry = -0.14, R = 0.12;
-    b.add(M.plasticWhite, tube([V3(0, -0.01, 0), V3(0, -0.025, 0), V3(0.02, -0.005, 0), V3(0.006, 0.024, 0), V3(-0.018, 0.012, 0)], 0.003, 16, 5));
-    b.add(M.plasticWhite, xf(cyl(0.004, 0.004, Math.abs(ry) - 0.02, 6), [0, ry / 2 - 0.012, 0]));
-    b.add(M.plasticWhite, xf(new THREE.TorusGeometry(R, 0.006, 8, 40), [0, ry, 0], [PI / 2, 0, 0]));
+    hook(b, 0.03);
+    b.add(M.plasticWhite, G.tube([[0, -0.03, 0], [0, ry, 0]], 0.004, { segments: 2, radial: 8 }));
+    const ring = Array.from({ length: 40 }, (_, i) => [Math.cos((i / 40) * 2 * PI) * R, ry, Math.sin((i / 40) * 2 * PI) * R]);
+    b.add(M.plasticWhite, G.tube(ring, 0.006, { segments: 64, radial: 8, closed: true }));
     for (let k = 0; k < 4; k++) {
       const a = (k / 4) * 2 * PI + PI / 4;
-      b.add(M.plasticWhite, tube([V3(0, ry + 0.11, 0), V3(Math.cos(a) * R * 0.6, ry + 0.04, Math.sin(a) * R * 0.6), V3(Math.cos(a) * R, ry, Math.sin(a) * R)], 0.0025, 8, 4));
+      b.add(M.plasticWhite, G.tube([[0, ry + 0.1, 0], [Math.cos(a) * R * 0.6, ry + 0.035, Math.sin(a) * R * 0.6], [Math.cos(a) * R, ry, Math.sin(a) * R]], 0.0025, { segments: 12, radial: 5 }));
     }
     const sockMats = [M.fabricOat, M.fabricOat, M.fabricGreyThrow, M.fabricGreyThrow, M.fabricWhite, M.fabricWhite];
     for (let k = 0; k < 8; k++) {
       const a = (k / 8) * 2 * PI;
       const cx = Math.cos(a) * R, cz = Math.sin(a) * R;
-      b.add(M.plasticSage, xf(box(0.012, 0.04, 0.02), [cx, ry - 0.02, cz], [0, -a, 0]));
+      b.add(M.plasticSage, xf(G.roundedBox(0.012, 0.04, 0.02, 0.003), [cx, ry - 0.02, cz], [0, -a, 0]));
       if (k < sockMats.length) {
-        const SOCK = [[-0.03, 0], [0.03, 0], [0.03, -0.17], [0.09, -0.22], [0.08, -0.26], [-0.02, -0.25], [-0.03, -0.2]];
-        const sock = clothSheet(6, 14, (u, v) => V3((u - 0.5) * 0.13 + 0.03, -v * 0.27, 0.004 * Math.sin(v * 8)), (u, v) => inPoly(SOCK, (u - 0.5) * 0.13 + 0.03, -v * 0.27), 0.006);
-        b.add(sockMats[k], xf(sock, [cx, ry - 0.03, cz], [0, -a + PI / 2, 0]));
+        // 襪口夾在夾子裡：窄平台、單側長垂（襪身）＋短垂
+        const sk = G.drapeOver({ w: 0.012, d: 0.07, overhang: { x0: 0.2, x1: 0.05 }, thickness: 0.006, wrinkle: 0.006, edgeRadius: 0.006, rng: r.fork(`s${k}`), res: 0.012, flare: 0.015 });
+        // 腳跟：襪身下段往外彎
+        const sp = sk.attributes.position;
+        for (let i = 0; i < sp.count; i++) {
+          const yy = sp.getY(i);
+          if (yy < -0.13) sp.setX(i, sp.getX(i) + (-yy - 0.13) * 0.8);
+        }
+        sk.computeVertexNormals();
+        b.add(sockMats[k], xf(sk, [cx, ry - 0.04, cz], [0, -a + PI / 2, 0]));
       }
     }
     at(b.build(name), x, ROD_Y, z);
@@ -502,9 +575,9 @@ export function build() {
     tshirt('clothes:tshirtWhite', ra, z(0.12), M.fabricWhite, 1, crng.jitter(0, 0.05));
     tshirt('clothes:tshirtBeige', ra, z(0.2), M.fabricLinen, 0.95, crng.jitter(0, 0.05));
     tshirt('clothes:tshirtTaupe', ra, z(0.28), M.fabricTaupe, 0.9, crng.jitter(0, 0.05));
-    towel('clothes:towelOat', ra, z(0.47), M.fabricOat, 0.4, 0.42, 0.34, M.fabricTaupe);
+    towel('clothes:towelOat', ra, z(0.47), M.fabricOat, 0.4, 0.42, 0.34);
     sockRing('clothes:sockRing', ra, z(0.84));
-    towel('clothes:towelWhite', rb, z(0.08), M.fabricWhite, 0.36, 0.4, 0.3, M.fabricOat);
+    towel('clothes:towelWhite', rb, z(0.08), M.fabricWhite, 0.36, 0.4, 0.3);
     tshirt('clothes:tshirtGrey', rb, z(0.3), M.fabricBoucle, 1, crng.jitter(0, 0.05));
     pants('clothes:pants', rb, z(0.45), M.fabricGreyThrow);
     tshirt('clothes:tshirtLinen', rb, z(0.58), M.fabricLinen, 1.05, crng.jitter(0, 0.05));
@@ -566,7 +639,7 @@ export function build() {
       const mat = f % 3 === 2 ? M.fabricLinen : M.fabricWhite;
       for (let k = 0; k < 14; k++) {
         const a = pr.range(0, 2 * PI), e = pr.range(0, 1.2);
-        b.add(mat, xf(new THREE.SphereGeometry(0.011, 6, 4), [top.x + Math.cos(a) * Math.sin(e) * 0.03, top.y + Math.cos(e) * 0.02, top.z + Math.sin(a) * Math.sin(e) * 0.03], [0, 0, 0], [1, 0.55, 1]));
+        b.add(mat, xf(new THREE.SphereGeometry(0.011, 5, 3), [top.x + Math.cos(a) * Math.sin(e) * 0.03, top.y + Math.cos(e) * 0.02, top.z + Math.sin(a) * Math.sin(e) * 0.03], [0, 0, 0], [1, 0.55, 1]));
       }
     }
     at(b.build('plant:geranium'), potX + 0.02, 0, Z0 + 0.66);
@@ -670,26 +743,27 @@ export function build() {
     const sw = 0.42, sd = 0.4, sh = 0.44;
     // 前腳、後腳（後腳延伸成靠背立柱，略後傾）
     for (const sx of [-1, 1]) {
-      b.add(M.woodOakDark, xf(box(0.035, sh, 0.035), [sx * (sw / 2 - 0.02), sh / 2, sd / 2 - 0.03], [0.06, 0, 0]));
-      b.add(M.woodOakDark, xf(box(0.035, 0.86, 0.035), [sx * (sw / 2 - 0.02), 0.43, -sd / 2 + 0.01], [-0.12, 0, 0]));
-      b.add(M.woodOakDark, xf(box(0.025, 0.03, sd), [sx * (sw / 2 - 0.02), sh - 0.05, 0]));
-      b.add(M.woodOakDark, xf(box(0.022, 0.022, sd + 0.04), [sx * (sw / 2 - 0.02), 0.14, 0]));
+      b.add(M.woodOakDark, xf(G.roundedBox(0.035, sh, 0.035, 0.006), [sx * (sw / 2 - 0.02), sh / 2, sd / 2 - 0.03], [0.06, 0, 0]));
+      b.add(M.woodOakDark, xf(G.roundedBox(0.035, 0.86, 0.035, 0.006), [sx * (sw / 2 - 0.02), 0.43, -sd / 2 + 0.01], [-0.12, 0, 0]));
+      b.add(M.woodOakDark, xf(G.roundedBox(0.025, 0.03, sd, 0.005), [sx * (sw / 2 - 0.02), sh - 0.05, 0]));
+      b.add(M.woodOakDark, xf(G.roundedBox(0.022, 0.022, sd + 0.04, 0.006), [sx * (sw / 2 - 0.02), 0.14, 0]));
     }
-    for (const z of [sd / 2 - 0.03, -sd / 2 + 0.03]) b.add(M.woodOakDark, xf(box(sw - 0.04, 0.03, 0.022), [0, sh - 0.05, z]));
-    for (let k = 0; k < 5; k++) b.add(M.woodOak, xf(rbox(sw, 0.02, sd / 5 - 0.012, 0.004), [0, sh - 0.025, -sd / 2 + sd / 10 + (k * sd) / 5]));
+    for (const z of [sd / 2 - 0.03, -sd / 2 + 0.03]) b.add(M.woodOakDark, xf(G.roundedBox(sw - 0.04, 0.03, 0.022, 0.005), [0, sh - 0.05, z]));
+    for (let k = 0; k < 5; k++) b.add(M.woodOak, xf(G.roundedBox(sw, 0.02, sd / 5 - 0.012, 0.004, 2), [0, sh - 0.025, -sd / 2 + sd / 10 + (k * sd) / 5]));
     for (let k = 0; k < 3; k++) {
       const y = 0.6 + k * 0.09;
-      b.add(M.woodOak, xf(rbox(sw - 0.02, 0.06, 0.018, 0.004), [0, y, -sd / 2 + 0.01 - (y - 0.43) * Math.tan(0.12) + 0.02], [-0.12, 0, 0]));
+      b.add(M.woodOak, xf(G.roundedBox(sw - 0.02, 0.06, 0.018, 0.004, 2), [0, y, -sd / 2 + 0.01 - (y - 0.43) * Math.tan(0.12) + 0.02], [-0.12, 0, 0]));
     }
     // 坐墊＋靠枕
-    b.add(M.fabricBoucle, xf(rbox(sw - 0.04, 0.05, sd - 0.04, 0.02, 3), [0, sh + 0.02, 0.01]));
-    b.add(M.fabricWhite, xf(rbox(0.3, 0.26, 0.1, 0.045, 3), [0, sh + 0.16, -sd / 2 + 0.06], [-0.2, 0, 0.05]));
+    const cr = rng.fork('chairCushion');
+    b.add(M.fabricBoucle, xf(G.mattress(sw - 0.03, 0.05, sd - 0.03, { radius: 0.018, crown: 0.012, wrinkle: 0.002, rng: cr.fork('seat') }), [0, sh + 0.026, 0.01]));
+    b.add(M.fabricLinen, xf(G.cushion(0.34, 0.12, 0.3, { seam: 0.18, wrinkle: 0.005, rng: cr.fork('pillow'), segments: 16 }), [0, sh + 0.2, -sd / 2 + 0.08], [-PI / 2 + 0.22, 0, 0.06]));
     const g = b.build('chair');
     at(g, chairX, 0, chairZ, -PI / 2);
 
     const s = new Bucket();
     const r = 0.15, hs = 0.45;
-    s.add(M.woodOak, xf(cyl(r, r, 0.03, 32), [0, hs - 0.015, 0]));
+    s.add(M.woodOak, xf(G.lathe([[0, 0], [r - 0.006, 0], [r, 0.006], [r, 0.024], [r - 0.006, 0.03], [0, 0.03]], 40), [0, hs - 0.03, 0]));
     for (let k = 0; k < 3; k++) {
       const a = (k / 3) * 2 * PI;
       s.add(M.woodOak, xf(cyl(0.014, 0.016, hs - 0.02, 8), [Math.cos(a) * 0.1, (hs - 0.02) / 2, Math.sin(a) * 0.1], [Math.sin(a) * 0.08, 0, -Math.cos(a) * 0.08]));
@@ -795,7 +869,7 @@ export function build() {
     const N = 22;
     for (let k = 1; k < N; k++) {
       const p = curve.getPoint(k / N);
-      b.add(M.lampBulb, xf(new THREE.SphereGeometry(0.014, 10, 8), [p.x, p.y - 0.022, p.z], [0, 0, 0], [1, 1.25, 1]));
+      b.add(M.lampBulb, xf(new THREE.SphereGeometry(0.014, 8, 5), [p.x, p.y - 0.022, p.z], [0, 0, 0], [1, 1.25, 1]));
       b.add(M.metalBrass, xf(cyl(0.006, 0.006, 0.012, 8), [p.x, p.y - 0.006, p.z]));
     }
     root.add(b.build('stringLights', { cast: false }));

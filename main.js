@@ -11,6 +11,7 @@
  *   ?play=1                    在瀏覽器即時播放 60 秒運鏡（可加 &t= 起始秒數）
  *   ?render=1                  逐格輸出影片（由 tools/render.mjs 驅動，不要手動開）
  *   &ao=0                      關掉環境遮蔽（比較用）
+ *   &pt=64                     搭配 render：用路徑追蹤，每格 64 次取樣（tools/render.mjs --pt=64）
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -117,6 +118,10 @@ const finish = () => {
 };
 
 if (params.has('render')) {
+  // 頁面錯誤直接回報給 tools/render.mjs，不要讓它乾等
+  const report = (msg) => fetch('/done', { method: 'POST', body: JSON.stringify({ errors: [...errors, `頁面錯誤：${msg}`] }) });
+  addEventListener('error', (e) => report(e.message));
+  addEventListener('unhandledrejection', (e) => report(e.reason?.stack ?? String(e.reason)));
   // ═══ 逐格輸出：時間只由格數決定，與機器快慢無關 ═══
   const { fps, width, height, duration } = L.VIDEO;
   setRenderSize(width, height, 1);
@@ -126,9 +131,23 @@ if (params.has('render')) {
   const from = Number(params.get('from') ?? 0);
   const to = Number(params.get('to') ?? total);
   const quality = Number(params.get('q') ?? 0.95);
+  // &pt=N：改用路徑追蹤，每格累積 N 次取樣（品質高、慢很多）
+  const ptSamples = Number(params.get('pt') ?? 0);
+  let tracer = null;
+  if (ptSamples > 0) {
+    const { createPathTracer } = await import('./pathtrace.js');
+    tracer = createPathTracer(renderer, scene, camera);
+    tracer.setSize(width, height);
+  }
   for (let f = from; f < to; f++) {
-    applyCamera(cameraAt(f / fps), camera, ceilingObjects, renderer);
-    draw();
+    const state = cameraAt(f / fps);
+    applyCamera(state, camera, ceilingObjects, renderer);
+    if (tracer) {
+      tracer.prepare(state.ceilings);
+      tracer.render(ptSamples);
+    } else {
+      draw();
+    }
     const blob = await new Promise((r) => renderer.domElement.toBlob(r, 'image/jpeg', quality));
     await fetch(`/frame?i=${f}`, { method: 'POST', body: blob });
   }

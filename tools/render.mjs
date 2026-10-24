@@ -1,4 +1,5 @@
 // 輸出影片：node tools/render.mjs [輸出.mp4] [--from=格] [--to=格] [--cpu]
+//   --pt=64：改用路徑追蹤，每格 64 次取樣（擬真但慢很多）
 //   預設用 GPU（約 6 格/秒）；--cpu 改用 SwiftShader 軟體渲染（約 0.3 格/秒，沒有顯卡時用）
 //   預設輸出 output/tour.mp4（layout.VIDEO：1920×1080、30fps、60 秒）
 //   流程：無頭 Edge/Chrome 逐格渲染 → 每格 JPEG POST 回來 → 直接餵給 ffmpeg 壓成 H.264
@@ -82,14 +83,17 @@ const server = await startServer(0, (req, res) => {
 });
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'render-'));
-const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}`;
+const pt = opt('pt', 0);
+const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}${pt ? `&pt=${pt}` : ''}`;
 console.log(`輸出 ${out}\n格 ${from}~${to}（共 ${to - from} 格，${VIDEO.width}×${VIDEO.height} @ ${VIDEO.fps}fps）`);
 browser = execFile(browserPath, [
   '--headless=new', '--hide-scrollbars', '--mute-audio',
   ...(useGpu ? ['--enable-gpu', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']),
   '--disable-gpu-sandbox', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
-  `--user-data-dir=${profile}`, `--window-size=${VIDEO.width},${VIDEO.height}`, url,
+  `--user-data-dir=${profile}`, `--window-size=${VIDEO.width},${VIDEO.height}`,
+  ...(process.env.RENDER_DEBUG ? ['--enable-logging=stderr', '--v=0'] : []), url,
 ], { maxBuffer: 64 * 1024 * 1024 });
+if (process.env.RENDER_DEBUG) browser.stderr.on('data', (d) => { const t = d.toString(); if (/CONSOLE|ERROR|WebGL|shader/i.test(t)) process.stderr.write(t); });
 
 await done;
 browser.kill();

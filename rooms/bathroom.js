@@ -9,11 +9,12 @@
  *   四面牆：灰褐石紋大磚（橫貼 60×30），淺色磚縫
  */
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as L from '../layout.js';
 import { M } from '../materials.js';
 import { rngFor } from '../rng.js';
+import { roundedBox, extrudeRounded, roundedRectShape, drapeOver, lathe, tube, worldUV } from '../geo.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const ROOM = 'bathroom';
 
@@ -34,14 +35,14 @@ function mk(geo, mat, name, { cast = true, receive = true } = {}) {
   return m;
 }
 
-function boxMM(x0, y0, z0, x1, y1, z1, mat, name, opts) {
-  const m = mk(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat, name, opts);
+function boxMM(x0, y0, z0, x1, y1, z1, mat, name, opts, r = 0.003) {
+  const m = mk(roundedBox(x1 - x0, y1 - y0, z1 - z0, r), mat, name, opts);
   m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   return m;
 }
 
 function rbox(w, h, d, r, mat, name, x, y, z, seg = 3) {
-  const m = mk(new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2, h / 2, d / 2) * 0.999), mat, name);
+  const m = mk(roundedBox(w, h, d, r, seg), mat, name);
   m.position.set(x, y, z);
   return m;
 }
@@ -75,10 +76,10 @@ function tileWall(group, rng, { name, axis, c, dir, a0, a1, y0, y1, tw, th, orig
       const ty0 = Math.max(y, y0) + TILE_GAP / 2, ty1 = Math.min(y + th, y1) - TILE_GAP / 2;
       if (ta1 - ta0 < 0.01 || ty1 - ty0 < 0.01) continue;
       const t = TILE_T * rng.range(0.88, 1.0);
-      geos.push(place(new THREE.BoxGeometry(ta1 - ta0, ty1 - ty0, t), (ta0 + ta1) / 2, (ty0 + ty1) / 2, GROUT_T + t / 2));
+      geos.push(place(roundedBox(ta1 - ta0, ty1 - ty0, t, 0.001, 1), (ta0 + ta1) / 2, (ty0 + ty1) / 2, GROUT_T + t / 2));
     }
   }
-  group.add(mk(mergeGeometries(geos), M.stoneTileWall, `${name}:tiles`, { cast: false }));
+  group.add(mk(worldUV(mergeGeometries(geos)), M.stoneTileWall, `${name}:tiles`, { cast: false }));
 }
 
 /** 掛在橫桿上的毛巾：U 形斷面，桿在原點、沿 z 方向寬 w（置中） */
@@ -162,7 +163,7 @@ export function build() {
       }
     }
     // 上方橫桿（牆到牆）＋壁座
-    shower.add(rod([W0, railY + 0.02, glassZ], [W1, railY + 0.02, glassZ], 0.011, M.metalChrome, 'shower:rail', 16));
+    shower.add(mk(tube([[W0, railY + 0.02, glassZ], [midX, railY + 0.02, glassZ], [W1, railY + 0.02, glassZ]], 0.011, { segments: 8, radial: 16 }), M.metalChrome, 'shower:rail'));
     for (const [sx, s] of [[W0, 1], [W1, -1]]) {
       const flange = mk(new THREE.CylinderGeometry(0.028, 0.028, 0.012, 20), M.metalChrome, 'shower:railFlange');
       flange.rotation.z = Math.PI / 2;
@@ -221,11 +222,13 @@ export function build() {
     elbow.position.set(px, topY, sz);
     shower.add(elbow);
     shower.add(rod([px + armLen, topY, sz], [px + armLen, topY - 0.04, sz], 0.01, M.metalChrome, 'shower:drop'));
-    const head = mk(new THREE.CylinderGeometry(0.11, 0.115, 0.018, 48), M.metalChrome, 'shower:rainHead');
-    head.position.set(px + armLen, topY - 0.05, sz);
+    // 頂噴：車削的薄碟（上緣圓弧、下方平面出水面）
+    const head = mk(lathe([[0, -0.012], [0.1, -0.012], [0.112, -0.009], [0.116, -0.003], [0.112, 0.004], [0.06, 0.009], [0.014, 0.011], [0, 0.011]], 64), M.metalChrome, 'shower:rainHead');
+    head.position.set(px + armLen, topY - 0.052, sz);
     shower.add(head);
-    const face = mk(new THREE.CylinderGeometry(0.1, 0.1, 0.002, 48), M.metalBrushed, 'shower:rainFace', { cast: false });
-    face.position.set(px + armLen, topY - 0.06, sz);
+    const face = mk(lathe([[0, 0], [0.098, 0], [0.1, 0.001], [0, 0.001]], 64), M.metalBrushed, 'shower:rainFace', { cast: false });
+    face.position.set(px + armLen, topY - 0.0655, sz);
+    face.rotation.x = Math.PI;
     shower.add(face);
     // 滑座＋手持花灑
     const sy = 1.55;
@@ -340,38 +343,71 @@ export function build() {
     const t = new THREE.Group();
     t.name = `${ROOM}:toilet`;
     // 本地：背靠牆在 z=0、前方 +z；轉 90° 後 +z → 世界 +x
-    t.add(rbox(0.38, 0.36, 0.17, 0.03, M.ceramicWhite, 'toilet:tank', 0, 0.6, 0.095));
-    t.add(rbox(0.4, 0.03, 0.19, 0.014, M.ceramicWhite, 'toilet:tankLid', 0, 0.795, 0.095));
-    t.add(rod([0.19, 0.72, 0.13], [0.23, 0.72, 0.13], 0.01, M.metalChrome, 'toilet:leverBase'));
-    t.add(rbox(0.012, 0.016, 0.075, 0.005, M.metalChrome, 'toilet:lever', 0.235, 0.72, 0.16));
-    t.add(rbox(0.25, 0.24, 0.22, 0.05, M.ceramicWhite, 'toilet:rearBody', 0, 0.28, 0.2));
-    const bowlPts = [
-      [0.11, 0.0], [0.115, 0.06], [0.122, 0.19], [0.15, 0.28], [0.176, 0.36], [0.18, 0.39],
-      [0.172, 0.4], [0.14, 0.392], [0.1, 0.33], [0.04, 0.25], [0.0, 0.24],
-    ].map(([r, y]) => new THREE.Vector2(r, y));
-    const bowlGeo = new THREE.LatheGeometry(bowlPts, 40);
-    bowlGeo.scale(1, 1, 1.4 * k);
-    const bowl = mk(bowlGeo, M.ceramicWhite, 'toilet:bowl');
-    bowl.position.set(0, 0, 0.42 * k);
-    t.add(bowl);
-    // 免治便座：厚蓋板＋後方機身＋右側小面板（實拍為一體式白色）
-    t.add(rbox(0.42, 0.075, 0.15, 0.03, M.plasticWhite, 'toilet:washletBody', 0, 0.44, 0.22 * k + 0.02));
-    const ringGeo = new THREE.TorusGeometry(0.148, 0.022, 10, 48);
-    ringGeo.rotateX(Math.PI / 2);
-    ringGeo.scale(1, 0.45, 1.36 * k);
-    const ring = mk(ringGeo, M.plasticWhite, 'toilet:seat');
-    ring.position.set(0, 0.413, 0.43 * k);
-    t.add(ring);
-    const lidGeo = new THREE.CylinderGeometry(0.176, 0.18, 0.035, 48);
-    lidGeo.scale(1, 1, 1.32 * k);
-    const lid = mk(lidGeo, M.plasticWhite, 'toilet:lid');
-    lid.position.set(0, 0.44, 0.43 * k);
-    t.add(lid);
-    t.add(rbox(0.04, 0.05, 0.14, 0.015, M.plasticWhite, 'toilet:sidePanel', 0.215, 0.43, 0.3 * k));
+    // 水箱：大圓角
+    t.add(rbox(0.38, 0.35, 0.17, 0.035, M.ceramicWhite, 'toilet:tank', 0, 0.6, 0.095, 5));
+    t.add(rbox(0.4, 0.032, 0.19, 0.014, M.ceramicWhite, 'toilet:tankLid', 0, 0.79, 0.095, 4));
+    t.add(rod([0.19, 0.72, 0.13], [0.205, 0.72, 0.13], 0.012, M.metalChrome, 'toilet:leverBase'));
+    t.add(rbox(0.012, 0.016, 0.075, 0.006, M.metalChrome, 'toilet:lever', 0.212, 0.72, 0.16));
+    // 本體：車削後壓成蛋形（前窄後寬），底座往後收，整體平滑
+    {
+      const prof = [
+        [0.0, 0.0], [0.105, 0.0], [0.112, 0.008], [0.116, 0.06], [0.12, 0.15], [0.132, 0.23], [0.152, 0.29],
+        [0.17, 0.34], [0.18, 0.37], [0.183, 0.385], [0.18, 0.398], [0.168, 0.404], [0.15, 0.402],
+        [0.136, 0.392], [0.11, 0.35], [0.07, 0.3], [0.03, 0.275], [0.0, 0.27],
+      ];
+      let g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 72);
+      const pos = g.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+        const zn = z / 0.183;                                  // -1 後 … +1 前
+        x *= 1 - 0.13 * Math.max(0, zn) ** 2;                   // 前端收窄成蛋形
+        z *= 1.38;
+        const low = Math.max(0, 1 - y / 0.26);                  // 底座：往後縮、前後變短
+        z = z * (1 - 0.3 * low) - 0.05 * low;
+        pos.setXYZ(i, x, y, z);
+      }
+      g.deleteAttribute('normal');
+      g.deleteAttribute('uv');
+      g = mergeVertices(g, 1e-5);
+      g.computeVertexNormals();
+      const bowl = mk(worldUV(g), M.ceramicWhite, 'toilet:bowl');
+      bowl.position.set(0, 0, 0.42);
+      t.add(bowl);
+    }
+    // 後段連接體（倒角圓角板疊成）
+    {
+      const rear = mk(extrudeRounded(roundedRectShape(0.27, 0.24, 0.09), 0.38, 0.03), M.ceramicWhite, 'toilet:rearBody');
+      rear.position.set(0, 0.0, 0.2);
+      t.add(rear);
+    }
+    // 免治便座：後方機身、座圈（露出邊）、蓋板（大圓角）、側面板
+    const egg = (w, d, seg = 72) => Array.from({ length: seg }, (_, i) => {
+      const a = (i / seg) * Math.PI * 2;
+      const s = Math.sin(a);
+      return [(w / 2) * Math.cos(a) * (1 - 0.14 * Math.max(0, s) ** 2), (d / 2) * s];
+    });
+    {
+      const body = mk(extrudeRounded(roundedRectShape(0.42, 0.15, 0.055), 0.075, 0.022), M.plasticWhite, 'toilet:washletBody');
+      body.position.set(0, 0.398, 0.215);
+      t.add(body);
+      const seat = mk(extrudeRounded(egg(0.37, 0.47), 0.022, 0.009), M.plasticWhite, 'toilet:seat');
+      seat.position.set(0, 0.401, 0.45);
+      t.add(seat);
+      const lid = mk(extrudeRounded(egg(0.36, 0.455), 0.03, 0.013), M.plasticWhite, 'toilet:lid');
+      lid.position.set(0, 0.423, 0.448);
+      t.add(lid);
+      t.add(rbox(0.04, 0.05, 0.14, 0.016, M.plasticWhite, 'toilet:sidePanel', 0.215, 0.43, 0.3, 4));
+      for (let i = 0; i < 3; i++) {
+        const btn = mk(lathe([[0, 0], [0.007, 0], [0.007, 0.003], [0, 0.004]], 16), i === 0 ? M.plasticBlush : M.stoneDark, `toilet:button${i}`);
+        btn.position.set(0.215, 0.455, 0.26 + i * 0.03);
+        t.add(btn);
+      }
+    }
     // 角閥
     t.add(rod([-0.13, 0.17, 0.0], [-0.13, 0.17, 0.06], 0.012, M.metalChrome, 'toilet:valve'));
     t.add(rod([-0.13, 0.17, 0.045], [-0.13, 0.43, 0.045], 0.005, M.metalChrome, 'toilet:supply'));
     t.rotation.y = Math.PI / 2;
+    t.scale.z = k;                                  // 依可用深度縮放前後向
     t.position.set(W0 + 0.004, 0, tz);
     root.add(t);
 
@@ -401,10 +437,14 @@ export function build() {
       rose.position.set(x, barY, S - 0.004);
       root.add(rose);
     }
-    const tg = towelGeo(bx1 - bx0 - 0.08, barR, 0.5, 0.45);
-    tg.rotateY(Math.PI / 2);                       // 毛巾寬改沿 x；U 形開口仍朝下
-    tg.translate((bx0 + bx1) / 2, barY, bz);
-    root.add(mk(tg, M.fabricWhite, 'bathTowel'));
+    // 浴巾：drapeOver 跨在桿上，前後兩側垂下（前長後短），帶皺褶
+    const tg = drapeOver({
+      w: bx1 - bx0 - 0.07, d: barR * 2, overhang: { z0: 0.52, z1: 0.42 },
+      thickness: 0.009, wrinkle: 0.022, edgeRadius: barR + 0.004, flare: 0.018, res: 0.015, rng: rng.fork('towel'),
+    });
+    const towel = mk(tg, M.fabricWhite, 'bathTowel');
+    towel.position.set((bx0 + bx1) / 2, barY + barR + 0.002, bz);
+    root.add(towel);
 
     // 排風扇（乾區天花，避開 shell 主燈）
     const [, fixZ] = L.rectCenter(L.ROOMS[ROOM].rect);

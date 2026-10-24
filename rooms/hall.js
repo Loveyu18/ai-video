@@ -7,10 +7,11 @@
  * 西牆是廁所門（往廁所內開），門前保持淨空；南側對餐廳開放。
  */
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import * as L from '../layout.js';
 import { M } from '../materials.js';
 import { rngFor } from '../rng.js';
+import { roundedBox, extrudeRounded, roundedRectShape, drapeOver, lathe, tube, worldUV } from '../geo.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const ROOM = 'hall';
 
@@ -26,13 +27,13 @@ function mk(geo, mat, name, { cast = true, receive = true } = {}) {
   m.receiveShadow = receive;
   return m;
 }
-function boxMM(x0, y0, z0, x1, y1, z1, mat, name, opts) {
-  const m = mk(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat, name, opts);
+function boxMM(x0, y0, z0, x1, y1, z1, mat, name, opts, r = 0.003) {
+  const m = mk(roundedBox(x1 - x0, y1 - y0, z1 - z0, r), mat, name, opts);
   m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   return m;
 }
 function rbox(w, h, d, r, mat, name, x, y, z, seg = 3) {
-  const m = mk(new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2, h / 2, d / 2) * 0.999), mat, name);
+  const m = mk(roundedBox(w, h, d, r, seg), mat, name);
   m.position.set(x, y, z);
   return m;
 }
@@ -56,8 +57,11 @@ function squareBasinGeo(halfW, halfD, profile, n = 7) {
     const f = Math.pow(Math.pow(Math.abs(c), n) + Math.pow(Math.abs(s), n), -1 / n);
     p.setXYZ(i, r * f * c * halfW, p.getY(i), r * f * s * halfD);
   }
-  g.computeVertexNormals();
-  return g;
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  const out = mergeVertices(g, 1e-5);
+  out.computeVertexNormals();
+  return worldUV(out);
 }
 
 export function build() {
@@ -88,7 +92,11 @@ export function build() {
   }
   // 一體檯面＋方形檯盆
   const cz1 = Z0 + VD;
-  v.add(rbox(VW, 0.055, VD, 0.012, M.ceramicWhite, 'vanity:counter', vxc, COUNTER_Y - 0.0275, Z0 + VD / 2));
+  {
+    const top = mk(extrudeRounded(roundedRectShape(VW - 0.012, VD - 0.012, 0.012), 0.055, 0.006), M.ceramicWhite, 'vanity:counter');
+    top.position.set(vxc, COUNTER_Y - 0.055, Z0 + VD / 2);
+    v.add(top);
+  }
   const bW = 0.27, bD = 0.18;                          // 半寬、半深
   const bzc = cz1 - 0.035 - bD;
   const basin = mk(squareBasinGeo(bW, bD, [
@@ -97,21 +105,32 @@ export function build() {
   ]), M.ceramicWhite, 'vanity:basin');
   basin.position.set(vxc, COUNTER_Y, bzc);
   v.add(basin);
+  // 盆底座：倒角圓角板，讓盆與檯面接合處有一道柔和的收邊
+  const plinth = mk(extrudeRounded(roundedRectShape(bW * 2 * 0.95, bD * 2 * 0.95, 0.07), 0.012, 0.004), M.ceramicWhite, 'vanity:basinPlinth');
+  plinth.position.set(vxc, COUNTER_Y - 0.002, bzc);
+  v.add(plinth);
   const drain = mk(new THREE.CylinderGeometry(0.02, 0.02, 0.003, 20), M.metalChrome, 'vanity:drain');
   drain.position.set(vxc, COUNTER_Y + 0.019, bzc);
   v.add(drain);
 
-  // 鉻色單把龍頭（立在檯盆後方檯面）
+  // 鉻色單把龍頭：車削本體＋管件出水口＋倒角把手
   {
-    const fz = Z0 + 0.04, fy = COUNTER_Y;
-    v.add(rod([vxc, fy, fz], [vxc, fy + 0.008, fz], 0.026, M.metalChrome, 'faucet:base', 24));
-    v.add(rod([vxc, fy + 0.008, fz], [vxc, fy + 0.2, fz], 0.018, M.metalChrome, 'faucet:body', 24));
-    v.add(rbox(0.04, 0.025, 0.13, 0.008, M.metalChrome, 'faucet:spout', vxc, fy + 0.185, fz + 0.065));
-    v.add(rod([vxc, fy + 0.172, fz + 0.12], [vxc, fy + 0.168, fz + 0.12], 0.009, M.metalBrushed, 'faucet:aerator'));
-    v.add(rod([vxc, fy + 0.2, fz], [vxc, fy + 0.225, fz], 0.016, M.metalChrome, 'faucet:cartridge', 20));
-    const lever = mk(new RoundedBoxGeometry(0.014, 0.012, 0.09, 2, 0.005), M.metalChrome, 'faucet:lever');
-    lever.position.set(vxc, fy + 0.235, fz + 0.025);
-    lever.rotation.x = -0.25;
+    const fz = Z0 + 0.045, fy = COUNTER_Y;
+    const body = mk(lathe([
+      [0, 0], [0.028, 0], [0.029, 0.004], [0.026, 0.01], [0.019, 0.02], [0.018, 0.17], [0.0185, 0.2], [0.017, 0.215], [0, 0.216],
+    ], 40), M.metalChrome, 'faucet:body');
+    body.position.set(vxc, fy, fz);
+    v.add(body);
+    v.add(mk(tube([[vxc, fy + 0.19, fz + 0.01], [vxc, fy + 0.195, fz + 0.06], [vxc, fy + 0.18, fz + 0.11], [vxc, fy + 0.15, fz + 0.13]], 0.009, { segments: 24, radial: 14 }), M.metalChrome, 'faucet:spout'));
+    const aer = mk(lathe([[0, 0], [0.0105, 0], [0.0105, 0.012], [0, 0.012]], 20), M.metalBrushed, 'faucet:aerator');
+    aer.position.set(vxc, fy + 0.138, fz + 0.13);
+    v.add(aer);
+    const cart = mk(lathe([[0, 0], [0.017, 0], [0.017, 0.02], [0.012, 0.03], [0, 0.031]], 32), M.metalChrome, 'faucet:cartridge');
+    cart.position.set(vxc, fy + 0.214, fz);
+    v.add(cart);
+    const lever = mk(roundedBox(0.016, 0.012, 0.1, 0.005, 3), M.metalChrome, 'faucet:lever');
+    lever.position.set(vxc, fy + 0.25, fz + 0.03);
+    lever.rotation.x = -0.35;
     v.add(lever);
   }
 
@@ -120,12 +139,12 @@ export function build() {
     const ty = COUNTER_Y;
     // 右側：給皂瓶（霧玻璃＋鉻壓頭）、玻璃杯
     const sx = vx1 - 0.07, sz = Z0 + 0.09;
-    v.add(mk(new THREE.CylinderGeometry(0.032, 0.034, 0.14, 24), M.glassFrosted, 'counter:soapBottle', { cast: false }));
-    v.children[v.children.length - 1].position.set(sx, ty + 0.07, sz);
+    const soap = mk(lathe([[0, 0], [0.031, 0], [0.034, 0.006], [0.034, 0.11], [0.03, 0.128], [0.014, 0.14], [0.012, 0.145], [0, 0.145]], 40), M.glassFrosted, 'counter:soapBottle', { cast: false });
+    soap.position.set(sx, ty, sz);
+    v.add(soap);
     v.add(rod([sx, ty + 0.14, sz], [sx, ty + 0.165, sz], 0.011, M.metalChrome, 'counter:soapPump'));
     v.add(rod([sx, ty + 0.165, sz], [sx, ty + 0.165, sz + 0.04], 0.005, M.metalChrome, 'counter:soapSpout'));
-    const cupPts = [[0, 0.002], [0.03, 0.0], [0.034, 0.1], [0.031, 0.1], [0.027, 0.008], [0, 0.008]].map(([r, y]) => new THREE.Vector2(r, y));
-    const cup = mk(new THREE.LatheGeometry(cupPts, 24), M.glass, 'counter:glassCup', { cast: false });
+    const cup = mk(lathe([[0, 0.0], [0.028, 0.0], [0.031, 0.004], [0.035, 0.098], [0.0345, 0.1], [0.032, 0.1], [0.028, 0.012], [0, 0.012]], 40), M.glass, 'counter:glassCup', { cast: false });
     cup.position.set(vx1 - 0.06, ty, Z0 + 0.2);
     v.add(cup);
     // 左側：小托盤（柚木）＋折好的小毛巾、香皂
@@ -136,6 +155,21 @@ export function build() {
     // 檯盆後方：深色皂盤＋香皂（實拍左後方）
     v.add(rbox(0.09, 0.012, 0.06, 0.005, M.stoneDark, 'counter:soapDish', vx0 + 0.09, ty + 0.006, Z0 + 0.05));
     v.add(rbox(0.06, 0.018, 0.04, 0.008, M.plasticWhite, 'counter:soapDishBar', vx0 + 0.09, ty + 0.021, Z0 + 0.05));
+  }
+
+  // 櫃體正面鉻色毛巾桿＋擦手巾（drapeOver 前後垂下）
+  {
+    const barY = cy1 - 0.11, barR = 0.007, bz = doorZ1 + 0.035;
+    const bx0 = vx0 + 0.12, bx1 = vx0 + 0.42;
+    v.add(rod([bx0, barY, bz], [bx1, barY, bz], barR, M.metalChrome, 'towelBar', 16));
+    for (const x of [bx0, bx1]) v.add(rod([x, barY, doorZ1], [x, barY, bz], 0.005, M.metalChrome, 'towelBarPost'));
+    const tg = drapeOver({
+      w: bx1 - bx0 - 0.06, d: barR * 2, overhang: { z0: 0.17, z1: 0.24 },
+      thickness: 0.007, wrinkle: 0.016, edgeRadius: barR + 0.003, flare: 0.012, res: 0.012, rng: rng.fork('handTowel'),
+    });
+    const towel = mk(tg, M.fabricOat, 'handTowel');
+    towel.position.set((bx0 + bx1) / 2, barY + barR + 0.002, bz);
+    v.add(towel);
   }
 
   // 無框長方鏡（略窄於浴櫃）

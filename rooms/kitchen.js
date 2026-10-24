@@ -10,11 +10,11 @@
  *   - 東北角：直立吸塵器、藍色掃把畚箕、紙箱
  */
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as L from '../layout.js';
 import { M } from '../materials.js';
 import { rngFor } from '../rng.js';
+import * as G from '../geo.js';
 
 const ROOM = 'kitchen';
 
@@ -27,7 +27,7 @@ const CTR_TOP = 0.88;         // 檯面高
 const CAB_TOP = CTR_TOP - CTR_T;
 const OVERHANG = 0.02;
 const FRONT_T = 0.02;         // 門片厚
-const GAP = 0.005;            // 無把手門片的細溝
+const GAP = 0.006;            // 無把手門片的細溝
 const WALL_CAB_D = 0.35;      // 吊櫃深
 const WALL_CAB_BOTTOM = 1.52;
 const CEIL_GAP = 0.005;       // 吊櫃頂與天花留縫
@@ -71,8 +71,9 @@ export function build() {
     parent.add(m);
     return m;
   };
-  const boxAt = (name, mat, x0, x1, y0, y1, z0, z1, parent = root, shadow = true) => {
-    const m = mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat, name, parent, shadow);
+  /** 倒角方塊（預設 2mm 倒角）：依 [x0,x1]×[y0,y1]×[z0,z1] 擺放 */
+  const boxAt = (name, mat, x0, x1, y0, y1, z0, z1, parent = root, shadow = true, r = 0.002, seg = 1) => {
+    const m = mesh(G.roundedBox(x1 - x0, y1 - y0, z1 - z0, r, seg), mat, name, parent, shadow);
     m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
     return m;
   };
@@ -82,7 +83,7 @@ export function build() {
     return m;
   };
   const lathe = (name, mat, pts, x, y, z, seg = 28, parent = root) => {
-    const m = mesh(new THREE.LatheGeometry(pts.map(([r, h]) => new THREE.Vector2(r, h)), seg), mat, name, parent);
+    const m = mesh(G.lathe(pts, seg), mat, name, parent);
     m.position.set(x, y, z);
     return m;
   };
@@ -92,9 +93,42 @@ export function build() {
     parent.add(g);
     return g;
   };
+  /** 管件（geo.tube）：points 為世界座標 */
+  const tubeAt = (name, mat, pts, r, parent = root, opts = {}) => mesh(G.tube(pts, r, opts), mat, name, parent);
+  /** 圓弧取點（2D） */
+  const arc = (cx, cy, r, a0, a1, n = 10) => Array.from({ length: n + 1 }, (_, i) => {
+    const a = a0 + ((a1 - a0) * i) / n;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  });
+  /**
+   * 帶孔的倒角擠出板：outer / holes 為 2D 點（逆時針 / 任意），厚度沿 +z（0~depth）。
+   * 倒角往內收，外形尺寸＝輪廓尺寸。
+   */
+  const extrudeHoles = (outer, holes, depth, bevel = 0.003) => {
+    const shape = new THREE.Shape(outer.map(([x, y]) => new THREE.Vector2(x, y)));
+    for (const h of holes) shape.holes.push(new THREE.Path(h.map(([x, y]) => new THREE.Vector2(x, y))));
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth: depth - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
+      bevelOffset: -bevel, bevelSegments: 3, curveSegments: 12,
+    });
+    geo.translate(0, 0, bevel);
+    return geo;
+  };
+  /** 圓角矩形 2D 輪廓（逆時針），範圍 [x0,x1]×[y0,y1]，r 可給四角各自半徑 [右下,右上,左上,左下] */
+  const rrect = (x0, x1, y0, y1, r) => {
+    const [r0, r1, r2, r3] = Array.isArray(r) ? r : [r, r, r, r];
+    const pts = [];
+    // 右下 → 右上 → 左上 → 左下
+    const cs = [[x1 - r0, y0 + r0, r0, -Math.PI / 2], [x1 - r1, y1 - r1, r1, 0], [x0 + r2, y1 - r2, r2, Math.PI / 2], [x0 + r3, y0 + r3, r3, Math.PI]];
+    for (const [cx, cy, rr, a0] of cs) {
+      if (rr <= 0) pts.push([cx, cy]);
+      else pts.push(...arc(cx, cy, rr, a0, a0 + Math.PI / 2, 6));
+    }
+    return pts;
+  };
   /** 面向 +x 的面板：z 範圍 [a,b]、高度 [y0,y1]、前表面在 xFront */
   const panelX = (name, mat, xFront, t, a, b, y0, y1, parent, gap = GAP, r = 0.003) => {
-    const geo = new RoundedBoxGeometry(t, y1 - y0 - gap, b - a - gap, 2, r);
+    const geo = G.roundedBox(t, y1 - y0 - gap, b - a - gap, r, 2);
     const m = mesh(geo, mat, name, parent);
     m.position.set(xFront - t / 2, (y0 + y1) / 2, (a + b) / 2);
     return m;
@@ -102,7 +136,6 @@ export function build() {
 
   // ═════════════════════ 下櫃（淺橡木、無把手細溝） ═════════════════════
   const base = group('baseCabinets');
-  boxAt('carcass', M.paintWhite, X0, FX - FRONT_T - 0.004, TOE, CAB_TOP, RZ0, RZ1, base);
   // 門片後的深色底板，讓門縫看起來是細黑溝
   boxAt('grooveBacker', M.paintCharcoal, FX - FRONT_T - 0.004, FX - FRONT_T, TOE, CAB_TOP, RZ0, RZ1, base, false);
   boxAt('toeKick', M.paintCharcoal, X0, FX - TOE_RECESS, 0, TOE, RZ0, RZ1, base);
@@ -144,6 +177,14 @@ export function build() {
     knob.rotation.z = -Math.PI / 2;
     knob.position.set(FX + 0.014, ovenY1 - dy, (ovenDoorZ1 + ovenZ1) / 2);
   }
+  // 門把：不鏽鋼彎管，兩端彎回門片
+  {
+    const hy = ovenY1 - 0.05;
+    tubeAt('oven:handle', M.metalBrushed, [
+      [FX + 0.012, hy, ovenZ0 + 0.06], [FX + 0.03, hy, ovenZ0 + 0.075], [FX + 0.036, hy, ovenZ0 + 0.12],
+      [FX + 0.036, hy, ovenDoorZ1 - 0.08], [FX + 0.03, hy, ovenDoorZ1 - 0.035], [FX + 0.012, hy, ovenDoorZ1 - 0.02],
+    ], 0.007, oven, { segments: 48, radial: 12 });
+  }
   for (let k = 0; k < 3; k++) {
     boxAt('oven:button', M.plasticBlack, FX + 0.004, FX + 0.008, ovenY0 + 0.05 + k * 0.03, ovenY0 + 0.07 + k * 0.03, ovenDoorZ1 + 0.035, ovenZ1 - 0.035, oven);
   }
@@ -153,10 +194,23 @@ export function build() {
   const SW = 0.5, SD = 0.4;                               // 水槽開孔（沿 z × 沿 x）
   const sinkZ = sinkMidZ, sinkX = X0 + 0.07 + SD / 2;
   const cx1 = FX + OVERHANG;
-  boxAt('counter:north', M.stoneCountertop, X0, cx1, CAB_TOP, CTR_TOP, RZ0, sinkZ - SW / 2, ctr);
-  boxAt('counter:south', M.stoneCountertop, X0, cx1, CAB_TOP, CTR_TOP, sinkZ + SW / 2, RZ1, ctr);
-  boxAt('counter:sinkBack', M.stoneCountertop, X0, sinkX - SD / 2, CAB_TOP, CTR_TOP, sinkZ - SW / 2, sinkZ + SW / 2, ctr);
-  boxAt('counter:sinkFront', M.stoneCountertop, sinkX + SD / 2, cx1, CAB_TOP, CTR_TOP, sinkZ - SW / 2, sinkZ + SW / 2, ctr);
+  // 櫃體：水槽下方的頂板降到水槽底下，不然會封住水槽
+  {
+    const cxb = FX - FRONT_T - 0.004;
+    const a = sinkZ - SW / 2 - 0.01, b = sinkZ + SW / 2 + 0.01;
+    boxAt('carcass:north', M.paintWhite, X0, cxb, TOE, CAB_TOP, RZ0, a, base);
+    boxAt('carcass:sink', M.paintWhite, X0, cxb, TOE, CTR_TOP - 0.23, a, b, base);
+    boxAt('carcass:south', M.paintWhite, X0, cxb, TOE, CAB_TOP, b, RZ1, base);
+  }
+  {
+    // 一整塊石英檯面：2D 輪廓 (x, -z) 擠出後轉成水平，前緣與水槽開孔都有 3mm 倒角
+    const outer = rrect(X0, cx1, -RZ1, -RZ0, [0.004, 0.004, 0, 0]);
+    const hole = rrect(sinkX - SD / 2, sinkX + SD / 2, -(sinkZ + SW / 2), -(sinkZ - SW / 2), 0.03);
+    const geo = extrudeHoles(outer, [hole], CTR_T, 0.003);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, CAB_TOP, 0);
+    mesh(G.worldUV(geo), M.stoneCountertop, 'counter', ctr);
+  }
 
   // ═════════════════════ 水槽與龍頭 ═════════════════════
   const sink = group('sink');
@@ -172,29 +226,33 @@ export function build() {
 
   // 黑色鵝頸龍頭（出水口朝 +x）
   const fX = X0 + 0.045, fZ = sinkZ - 0.04;
-  cyl('faucet:base', M.metalBlack, 0.024, 0.028, 0.04, fX, CTR_TOP, fZ, 24, sink);
-  const neck = new THREE.CubicBezierCurve3(
-    new THREE.Vector3(fX, CTR_TOP + 0.03, fZ),
-    new THREE.Vector3(fX, CTR_TOP + 0.46, fZ),
-    new THREE.Vector3(fX + 0.24, CTR_TOP + 0.46, fZ),
-    new THREE.Vector3(fX + 0.24, CTR_TOP + 0.3, fZ),
-  );
-  mesh(new THREE.TubeGeometry(neck, 40, 0.012, 12, false), M.metalBlack, 'faucet:neck', sink);
-  cyl('faucet:tip', M.metalBlack, 0.014, 0.015, 0.035, fX + 0.24, CTR_TOP + 0.27, fZ, 16, sink);
-  const lever = cyl('faucet:lever', M.metalBlack, 0.007, 0.007, 0.1, 0, 0, 0, 12, sink);
-  lever.rotation.x = Math.PI / 2.8;
-  lever.position.set(fX + 0.005, CTR_TOP + 0.14, fZ + 0.05);
-  cyl('faucet:leverHub', M.metalBlack, 0.016, 0.016, 0.035, fX, CTR_TOP + 0.1, fZ + 0.02, 16, sink).rotation.x = Math.PI / 2;
+  // 底座（車削，上緣圓潤）
+  lathe('faucet:base', M.metalBlack, [[0, 0], [0.029, 0], [0.03, 0.004], [0.027, 0.03], [0.02, 0.05], [0.013, 0.056], [0, 0.056]], fX, CTR_TOP, fZ, 32, sink);
+  // 握把座＋單把手
+  const hub = mesh(G.lathe([[0, 0], [0.017, 0], [0.018, 0.03], [0.015, 0.038], [0, 0.04]], 24), M.metalBlack, 'faucet:leverHub', sink);
+  hub.rotation.x = -Math.PI / 2;
+  hub.position.set(fX, CTR_TOP + 0.11, fZ + 0.012);
+  tubeAt('faucet:lever', M.metalBlack, [
+    [fX, CTR_TOP + 0.11, fZ + 0.05], [fX + 0.01, CTR_TOP + 0.13, fZ + 0.08], [fX + 0.02, CTR_TOP + 0.16, fZ + 0.12],
+  ], 0.006, sink, { segments: 16, radial: 10 });
+  // 鵝頸：一根連續彎管
+  const neckPts = [
+    [fX, CTR_TOP + 0.05, fZ], [fX, CTR_TOP + 0.2, fZ], [fX, CTR_TOP + 0.36, fZ],
+    [fX + 0.03, CTR_TOP + 0.45, fZ], [fX + 0.11, CTR_TOP + 0.48, fZ], [fX + 0.19, CTR_TOP + 0.45, fZ],
+    [fX + 0.23, CTR_TOP + 0.38, fZ], [fX + 0.24, CTR_TOP + 0.31, fZ],
+  ];
+  tubeAt('faucet:neck', M.metalBlack, neckPts, 0.012, sink, { segments: 80, radial: 16 });
+  lathe('faucet:aerator', M.metalBlack, [[0, 0], [0.011, 0], [0.0135, 0.004], [0.0135, 0.03], [0.012, 0.034], [0, 0.034]], fX + 0.24, CTR_TOP + 0.285, fZ, 20, sink);
   // 淨水龍頭（不鏽鋼細管）
   const fz2 = sinkZ + 0.13;
-  cyl('filterTap:base', M.metalChrome, 0.016, 0.018, 0.03, fX, CTR_TOP, fz2, 16, sink);
-  const tap = new THREE.CubicBezierCurve3(
-    new THREE.Vector3(fX, CTR_TOP + 0.02, fz2),
-    new THREE.Vector3(fX, CTR_TOP + 0.36, fz2),
-    new THREE.Vector3(fX + 0.17, CTR_TOP + 0.36, fz2),
-    new THREE.Vector3(fX + 0.17, CTR_TOP + 0.26, fz2),
-  );
-  mesh(new THREE.TubeGeometry(tap, 32, 0.007, 10, false), M.metalChrome, 'filterTap:neck', sink);
+  lathe('filterTap:base', M.metalChrome, [[0, 0], [0.019, 0], [0.019, 0.004], [0.014, 0.02], [0.009, 0.035], [0, 0.035]], fX, CTR_TOP, fz2, 24, sink);
+  tubeAt('filterTap:neck', M.metalChrome, [
+    [fX, CTR_TOP + 0.03, fz2], [fX, CTR_TOP + 0.25, fz2], [fX + 0.03, CTR_TOP + 0.34, fz2],
+    [fX + 0.1, CTR_TOP + 0.36, fz2], [fX + 0.16, CTR_TOP + 0.32, fz2], [fX + 0.17, CTR_TOP + 0.26, fz2],
+  ], 0.0065, sink, { segments: 64, radial: 12 });
+  const ftKnob = mesh(G.lathe([[0, 0], [0.012, 0], [0.012, 0.02], [0, 0.022]], 16), M.metalChrome, 'filterTap:knob', sink);
+  ftKnob.position.set(fX, CTR_TOP + 0.2, fz2);
+  ftKnob.rotation.z = -Math.PI / 2;
 
   // ═════════════════════ 兩口黑玻璃瓦斯爐 ═════════════════════
   const stove = group('stove');
@@ -205,23 +263,35 @@ export function build() {
   boxAt('stove:trim', M.metalBrushed, stX - 0.245, stX + 0.245, CTR_TOP, CTR_TOP + 0.006, stZ - 0.365, stZ + 0.365, stove);
   for (const [i, dz] of [[0, -0.18], [1, 0.18]]) {
     const bx = stX - 0.02, bz = stZ + dz;
-    cyl(`stove:burner${i}:ring`, M.metalBrushed, 0.075, 0.08, 0.012, bx, gTop, bz, 36, stove);
-    cyl(`stove:burner${i}:crown`, M.metalBlack, 0.05, 0.052, 0.016, bx, gTop + 0.012, bz, 32, stove);
-    cyl(`stove:burner${i}:cap`, M.metalBlack, 0.032, 0.036, 0.008, bx, gTop + 0.028, bz, 32, stove);
-    const ring = mesh(new THREE.TorusGeometry(0.105, 0.005, 8, 40), M.metalBrushed, `stove:burner${i}:grate`, stove);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(bx, gTop + 0.03, bz);
+    // 承液盤（不鏽鋼，車削出淺碟）＋黃銅色爐頭＋黑色爐蓋
+    lathe(`stove:burner${i}:drip`, M.metalBrushed, [
+      [0.03, 0.004], [0.06, 0.003], [0.082, 0.001], [0.085, 0], [0.087, 0.002], [0.084, 0.006], [0.06, 0.008], [0.048, 0.012], [0.046, 0.014],
+    ], bx, gTop, bz, 48, stove);
+    lathe(`stove:burner${i}:crown`, M.metalBrushed, [
+      [0, 0.004], [0.05, 0.004], [0.052, 0.01], [0.052, 0.022], [0.048, 0.025], [0, 0.025],
+    ], bx, gTop, bz, 40, stove);
+    lathe(`stove:burner${i}:cap`, M.metalBlack, [
+      [0, 0.024], [0.044, 0.024], [0.046, 0.027], [0.043, 0.031], [0.03, 0.034], [0, 0.035],
+    ], bx, gTop, bz, 40, stove);
+    // 爐架：外圈圓環＋四支往內的爪（各自往下彎成腳）
+    const gy = gTop + 0.038, GR = 0.112;
+    const ringPts = Array.from({ length: 24 }, (_, k) => {
+      const a = (k / 24) * Math.PI * 2;
+      return [bx + Math.cos(a) * GR, gy, bz + Math.sin(a) * GR];
+    });
+    tubeAt(`stove:burner${i}:grateRing`, M.metalBlack, ringPts, 0.0045, stove, { segments: 72, radial: 8, closed: true });
     for (let k = 0; k < 4; k++) {
       const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
-      const bar = mesh(new THREE.BoxGeometry(0.07, 0.008, 0.008), M.metalBrushed, `stove:burner${i}:grateBar`, stove);
-      bar.position.set(bx + Math.cos(a) * 0.1, gTop + 0.03, bz + Math.sin(a) * 0.1);
-      bar.rotation.y = -a;
-      const leg = mesh(new THREE.BoxGeometry(0.008, 0.03, 0.008), M.metalBrushed, `stove:burner${i}:grateLeg`, stove);
-      leg.position.set(bx + Math.cos(a) * 0.105, gTop + 0.015, bz + Math.sin(a) * 0.105);
+      const c = Math.cos(a), sn = Math.sin(a);
+      const at = (r, y) => [bx + c * r, y, bz + sn * r];
+      tubeAt(`stove:burner${i}:grateArm`, M.metalBlack, [
+        at(0.055, gy + 0.006), at(0.08, gy + 0.004), at(GR, gy), at(GR + 0.012, gy - 0.015), at(GR + 0.014, gTop + 0.002),
+      ], 0.004, stove, { segments: 24, radial: 8 });
     }
-    const knob = cyl(`stove:knob${i}`, M.metalChrome, 0.02, 0.023, 0.024, stX + 0.17, gTop, bz, 24, stove);
+    // 旋鈕（車削）＋握把
+    const knob = lathe(`stove:knob${i}`, M.metalChrome, [[0, 0], [0.024, 0], [0.025, 0.004], [0.022, 0.018], [0.019, 0.022], [0, 0.023]], stX + 0.17, gTop, bz, 32, stove);
     knob.rotation.y = rng.range(0, Math.PI);
-    boxAt(`stove:knob${i}:grip`, M.plasticBlack, stX + 0.155, stX + 0.185, gTop + 0.024, gTop + 0.032, bz - 0.003, bz + 0.003, stove);
+    boxAt(`stove:knob${i}:grip`, M.plasticBlack, stX + 0.155, stX + 0.185, gTop + 0.02, gTop + 0.034, bz - 0.004, bz + 0.004, stove, true, 0.003, 2);
   }
 
   // ═════════════════════ 黑玻璃背牆＋插座 ═════════════════════
@@ -284,7 +354,7 @@ export function build() {
   }
   // 前方斜玻璃擋板：從機身前緣往外、往上翹
   const visorLen = 0.2, visorAng = 0.32;
-  const visor = mesh(new THREE.BoxGeometry(visorLen, 0.006, hz1 - hz0), M.glassFrosted, 'hood:glassVisor', hood, false);
+  const visor = mesh(G.roundedBox(visorLen, 0.006, hz1 - hz0, 0.0025, 2), M.glassFrosted, 'hood:glassVisor', hood, false);
   visor.rotation.z = visorAng;
   visor.position.set(X0 + 0.42 + Math.cos(visorAng) * visorLen / 2, hb + 0.02 + Math.sin(visorAng) * visorLen / 2, (hz0 + hz1) / 2);
   const tipX = X0 + 0.42 + Math.cos(visorAng) * visorLen, tipY = hb + 0.02 + Math.sin(visorAng) * visorLen;
@@ -327,19 +397,17 @@ export function build() {
           const pa = a + GROUT / 2, pb = b - GROUT / 2;
           const va = pv0 + GROUT / 2, vb = pv1 - (pv1 >= H ? 0 : GROUT / 2);
           if (pb - pa < 0.01 || vb - va < 0.01) continue;
+          // 每塊磚 1mm 倒角，像真的磚邊
           const geo = axis === 'x'
-            ? new THREE.BoxGeometry(pb - pa, vb - va, TILE_T)
-            : new THREE.BoxGeometry(TILE_T, vb - va, pb - pa);
-          // 讓每塊磚取紋理的不同區域，紋路才不會重複
-          const uv = geo.attributes.uv;
-          const su = (pb - pa) / 2, sv = (vb - va) / 2;
-          for (let i = 0; i < uv.count; i++) {
-            const x = uv.getX(i), y = uv.getY(i);
-            uv.setXY(i, (flip ? 1 - x : x) * su + ou, y * sv + ov);
-          }
+            ? G.roundedBox(pb - pa, vb - va, TILE_T, 0.001, 1)
+            : G.roundedBox(TILE_T, vb - va, pb - pa, 0.001, 1);
           const n = plane + nSign * TILE_T / 2;
           if (axis === 'x') geo.translate((pa + pb) / 2, (va + vb) / 2, n);
           else geo.translate(n, (va + vb) / 2, (pa + pb) / 2);
+          // 公尺單位 UV，再給每塊磚不同的偏移／翻面，紋路才不會重複
+          G.worldUV(geo);
+          const uv = geo.attributes.uv;
+          for (let i = 0; i < uv.count; i++) uv.setXY(i, (flip ? -1 : 1) * uv.getX(i) + ou, uv.getY(i) + ov);
           const key = edges.filter((e) => e < (pa + pb) / 2).length;
           if (!buckets.has(key)) buckets.set(key, []);
           buckets.get(key).push(geo);
@@ -360,7 +428,7 @@ export function build() {
       let cur = u0;
       for (const [h0, h1, , hv1] of [...holes].sort((p, q) => p[0] - q[0])) {
         if (h0 > cur) parts.push([cur, h0, 0, H]);
-        parts.push([Math.max(h0, cur), h1, hv1, H]);
+        parts.push([Math.max(h0, cur), h1, hv1 + 0.001, H]);
         cur = h1;
       }
       if (cur < u1) parts.push([cur, u1, 0, H]);
@@ -382,84 +450,105 @@ export function build() {
   // ═════════════════════ 檯面擺飾 ═════════════════════
   const props = group('props');
   const top = CTR_TOP;
-  // 兩塊木砧板斜靠背牆（爐子與水槽之間）
+  // 兩塊木砧板斜靠背牆（爐子與水槽之間）：倒角擠出、手把挖孔
   const boardZ = zDrawer[1] - 0.12;
-  {
-    const g = group('cuttingBoard:paddle', props);
-    const shape = new THREE.Shape();
-    const w = 0.2, h = 0.38, hw = 0.035, hh = 0.13, r = 0.025;
-    shape.moveTo(-w / 2 + r, 0);
-    shape.lineTo(w / 2 - r, 0);
-    shape.quadraticCurveTo(w / 2, 0, w / 2, r);
-    shape.lineTo(w / 2, h - 0.04);
-    shape.quadraticCurveTo(w / 2, h, w / 2 - 0.05, h);
-    shape.lineTo(hw / 2, h);
-    shape.lineTo(hw / 2, h + hh - hw / 2);
-    shape.absarc(0, h + hh - hw / 2, hw / 2, 0, Math.PI, false);
-    shape.lineTo(-hw / 2, h);
-    shape.lineTo(-w / 2 + 0.05, h);
-    shape.quadraticCurveTo(-w / 2, h, -w / 2, h - 0.04);
-    shape.lineTo(-w / 2, r);
-    shape.quadraticCurveTo(-w / 2, 0, -w / 2 + r, 0);
-    const hole = new THREE.Path();
-    hole.absarc(0, h + hh - hw / 2, 0.009, 0, Math.PI * 2, true);
-    shape.holes.push(hole);
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.022, bevelEnabled: true, bevelSize: 0.003, bevelThickness: 0.003, bevelSegments: 1, curveSegments: 8 });
-    geo.translate(0, 0, -0.011);
-    const b = mesh(geo, M.woodOakDark, 'cuttingBoard:paddle', g);
+  const BOARD_T = 0.02;
+  const standBoard = (name, mat, outer, holes, x, z, lean) => {
+    const g = group(name, props);
+    const geo = extrudeHoles(outer, holes, BOARD_T, 0.004);
+    geo.translate(0, 0, -BOARD_T / 2);
+    const b = mesh(G.worldUV(geo, 0.5), mat, name, g);
     // 板面朝 +x，底部離牆、頂端靠在玻璃上
     b.rotation.set(0, Math.PI / 2, 0);
-    g.position.set(X0 + 0.12, top + 0.003, boardZ);
-    g.rotation.z = 0.16;
+    g.position.set(x, top + 0.002, z);
+    g.rotation.z = lean;
+    return g;
+  };
+  {
+    // 長形砧板：板身＋圓頭手把（肩部圓角過渡）
+    const w = 0.2, h = 0.36, r = 0.028, hw = 0.042, hl = 0.12, f = 0.016;
+    const outer = [
+      ...arc(w / 2 - r, r, r, -Math.PI / 2, 0, 8),
+      ...arc(w / 2 - r, h - r, r, 0, Math.PI / 2, 8),
+      ...arc(hw / 2 + f, h + f, f, -Math.PI / 2, -Math.PI, 6),
+      ...arc(0, h + hl, hw / 2, 0, Math.PI, 12),
+      ...arc(-hw / 2 - f, h + f, f, 0, -Math.PI / 2, 6),
+      ...arc(-w / 2 + r, h - r, r, Math.PI / 2, Math.PI, 8),
+      ...arc(-w / 2 + r, r, r, Math.PI, Math.PI * 1.5, 8),
+    ];
+    const hole = arc(0, h + hl, 0.009, 0, Math.PI * 2, 16).slice(0, -1);
+    standBoard('cuttingBoard:paddle', M.woodOakDark, outer, [hole], X0 + 0.12, boardZ, 0.16);
   }
   {
-    const g = group('cuttingBoard:round', props);
-    // 圓盤＋短柄（本地 y 往上、板面朝 +z）
-    const disk = mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.018, 40), M.woodOak, 'cuttingBoard:round', g);
-    disk.rotation.x = Math.PI / 2;
-    disk.position.y = 0.13;
-    const hdl = mesh(new RoundedBoxGeometry(0.045, 0.11, 0.018, 2, 0.008), M.woodOak, 'cuttingBoard:roundHandle', g);
-    hdl.position.y = 0.3;
-    const b = new THREE.Group();
-    b.add(disk, hdl);
-    g.add(b);
-    // 斜靠背牆，疊在長砧板前方（偏南）
-    b.rotation.set(0, Math.PI / 2, 0);
-    g.position.set(X0 + 0.19, top + 0.003, boardZ + 0.14);
-    g.rotation.z = 0.36;
+    // 圓形砧板＋短手把
+    const R = 0.13, hw = 0.0225, hy = 0.33;
+    const a1 = Math.acos(hw / R);
+    const outer = [
+      ...arc(0, R, R, Math.PI - a1, Math.PI * 2 + a1, 56),
+      ...arc(0, hy, hw, 0, Math.PI, 12),
+    ];
+    const hole = arc(0, hy, 0.008, 0, Math.PI * 2, 16).slice(0, -1);
+    standBoard('cuttingBoard:round', M.woodOak, outer, [hole], X0 + 0.19, boardZ + 0.14, 0.36);
   }
   // 桌巾＋托盤＋兩支高腳杯＋乾燥花（爐子與水槽之間偏水槽側）
   const trayZ = (zDrawer[0] + zDrawer[1]) / 2 - 0.12;
   const trayX = X0 + 0.38;
-  boxAt('tableRunner', M.fabricLinen, X0 + 0.16, FX - 0.02, top, top + 0.003, trayZ - 0.2, trayZ + 0.2, props);
-  const tray = mesh(new RoundedBoxGeometry(0.2, 0.018, 0.3, 2, 0.006), M.woodWalnut, 'tray', props);
-  tray.position.set(trayX, top + 0.003 + 0.009, trayZ);
-  const trayTop = top + 0.021;
-  const goblet = [[0, 0], [0.035, 0], [0.036, 0.004], [0.006, 0.01], [0.004, 0.09], [0.012, 0.1], [0.036, 0.13], [0.04, 0.17], [0.038, 0.2], [0.036, 0.2], [0.037, 0.17], [0.033, 0.135], [0.01, 0.105], [0, 0.105]];
-  for (const [i, dz] of [[0, -0.07], [1, 0.07]]) {
-    const gm = lathe(`goblet${i}`, M.glassFrosted, goblet, trayX, trayTop, trayZ + dz, 28, props);
-    gm.castShadow = false;
-    lathe(`goblet${i}:stem`, M.glassBlack, goblet.slice(0, 6), trayX, trayTop, trayZ + dz, 16, props);
+  boxAt('tableRunner', M.fabricLinen, X0 + 0.16, FX - 0.02, top, top + 0.003, trayZ - 0.2, trayZ + 0.2, props, true, 0.001);
+  const TRAY_W = 0.2, TRAY_D = 0.3, TRAY_B = 0.01;
+  const tray = mesh(G.extrudeRounded(G.roundedRectShape(TRAY_W, TRAY_D, 0.025), TRAY_B, 0.003), M.woodWalnut, 'tray', props);
+  tray.position.set(trayX, top + 0.003, trayZ);
+  {
+    // 托盤邊框：外圈與內圈圓角矩形之間擠出
+    const rim = extrudeHoles(
+      rrect(-TRAY_W / 2, TRAY_W / 2, -TRAY_D / 2, TRAY_D / 2, 0.025),
+      [rrect(-TRAY_W / 2 + 0.01, TRAY_W / 2 - 0.01, -TRAY_D / 2 + 0.01, TRAY_D / 2 - 0.01, 0.016)],
+      0.012, 0.0025,
+    );
+    rim.rotateX(-Math.PI / 2);
+    const m = mesh(G.worldUV(rim), M.woodWalnut, 'tray:rim', props);
+    m.position.set(trayX, top + 0.003 + TRAY_B - 0.001, trayZ);
   }
-  // 乾燥花：一束細枝＋小花頭
+  const trayTop = top + 0.003 + TRAY_B;
+  // 高腳杯：底座、細柄、杯身（有杯壁厚度）
+  const goblet = [
+    [0, 0], [0.036, 0], [0.0375, 0.0015], [0.036, 0.003], [0.014, 0.007], [0.006, 0.014], [0.0042, 0.03],
+    [0.0038, 0.07], [0.0045, 0.085], [0.009, 0.095], [0.022, 0.104], [0.034, 0.118], [0.041, 0.14],
+    [0.042, 0.165], [0.039, 0.198], [0.0375, 0.2], [0.0365, 0.198], [0.0395, 0.165], [0.0385, 0.141],
+    [0.032, 0.121], [0.02, 0.108], [0.006, 0.1], [0, 0.099],
+  ];
+  for (const [i, dz] of [[0, -0.07], [1, 0.07]]) {
+    const gm = lathe(`goblet${i}`, M.glass, goblet, trayX, trayTop, trayZ + dz, 48, props);
+    gm.castShadow = false;
+  }
+  // 乾燥花：細枝用彎管，往南散開平放在檯面
   const flRng = rng.fork('driedFlowers');
   const flX = X0 + 0.22, flZ = trayZ - 0.2;
-  for (let k = 0; k < 9; k++) {
+  for (let k = 0; k < 11; k++) {
     const len = flRng.range(0.22, 0.32);
-    const tilt = flRng.range(0.6, 1.0);
-    const yaw = flRng.range(-0.5, 0.5);
-    const stem = mesh(new THREE.CylinderGeometry(0.0018, 0.0022, len, 5), M.stem, 'driedFlowers:stem', props);
-    // 平放在檯面、往南散開
-    const dir = new THREE.Vector3(Math.sin(yaw) * 0.6, Math.cos(tilt) * 0.3, Math.cos(yaw)).normalize();
-    stem.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    stem.position.set(flX + dir.x * len / 2, top + 0.006 + dir.y * len / 2, flZ - 0.08 + dir.z * len / 2);
-    const tip = stem.position.clone().addScaledVector(dir, len / 2);
-    for (let j = 0; j < 3; j++) {
-      const head = mesh(new THREE.SphereGeometry(flRng.range(0.008, 0.014), 6, 4), flRng.pick([M.leafOlive, M.fabricBlush, M.rattan, M.fabricOat]), 'driedFlowers:head', props);
-      head.position.copy(tip).add(new THREE.Vector3(flRng.jitter(0, 0.015), flRng.range(0, 0.012), -flRng.range(0, 0.04)));
+    const yaw = flRng.range(-0.45, 0.45);
+    const lift = flRng.range(0.03, 0.08);
+    const sx = flX + flRng.jitter(0, 0.006), sz = flZ - 0.08;
+    const dx = Math.sin(yaw), dz = Math.cos(yaw);
+    const pts = [0, 0.35, 0.7, 1].map((t) => [
+      sx + dx * len * t + flRng.jitter(0, 0.004),
+      top + 0.006 + lift * Math.sin(t * Math.PI * 0.8),
+      sz + dz * len * t,
+    ]);
+    tubeAt('driedFlowers:stem', M.stem, pts, 0.0018, props, { segments: 12, radial: 5 });
+    const tip = pts[3];
+    for (let j = 0; j < 4; j++) {
+      const head = mesh(new THREE.SphereGeometry(flRng.range(0.006, 0.012), 8, 6), flRng.pick([M.leafOlive, M.fabricBlush, M.rattan, M.fabricOat]), 'driedFlowers:head', props);
+      head.position.set(tip[0] + flRng.jitter(0, 0.015), tip[1] + flRng.range(0, 0.012), tip[2] - flRng.range(0, 0.05));
+    }
+    // 小葉片
+    if (k % 3 === 0) {
+      const leaf = mesh(new THREE.SphereGeometry(0.01, 8, 4), M.leafOlive, 'driedFlowers:leaf', props);
+      leaf.scale.set(0.4, 0.15, 1.6);
+      leaf.position.set(pts[2][0] + 0.008, pts[2][1], pts[2][2]);
+      leaf.rotation.y = yaw + 0.5;
     }
   }
-  boxAt('driedFlowers:tie', M.fabricLinen, flX - 0.012, flX + 0.012, top + 0.003, top + 0.018, flZ + 0.0, flZ + 0.02, props);
+  boxAt('driedFlowers:tie', M.fabricLinen, flX - 0.012, flX + 0.012, top + 0.003, top + 0.018, flZ - 0.075, flZ - 0.055, props, true, 0.004, 2);
 
   // ═════════════════════ 東北角地上：吸塵器、掃把畚箕、紙箱 ═════════════════════
   const corner = group('cornerItems');
@@ -469,48 +558,58 @@ export function build() {
   const vX = ewX - 0.6, vZ = nwZ + 0.12;
   {
     const g = group('vacuum', corner);
-    boxAt('vacuum:head', M.plasticWhite, vX - 0.13, vX + 0.13, 0, 0.05, vZ - 0.02, vZ + 0.09, g);
-    boxAt('vacuum:headStrip', M.plasticBlack, vX - 0.13, vX + 0.13, 0, 0.012, vZ + 0.088, vZ + 0.092, g);
-    cyl('vacuum:neck', M.plasticBlack, 0.022, 0.022, 0.06, vX, 0.04, vZ + 0.03, 16, g);
-    const stick = cyl('vacuum:tube', M.plasticWhite, 0.016, 0.016, 0.7, vX, 0.08, vZ + 0.02, 16, g);
-    stick.rotation.x = -0.05;
-    const body = mesh(new RoundedBoxGeometry(0.09, 0.32, 0.1, 2, 0.03), M.plasticWhite, 'vacuum:body', g);
-    body.position.set(vX, 0.62, vZ + 0.05);
-    cyl('vacuum:dustCup', M.glassFrosted, 0.038, 0.038, 0.15, vX, 0.45, vZ + 0.1, 20, g).castShadow = false;
-    cyl('vacuum:upperTube', M.plasticWhite, 0.014, 0.014, 0.35, vX, 0.78, vZ + 0.02, 12, g);
-    const grip = mesh(new THREE.TorusGeometry(0.05, 0.012, 8, 20, Math.PI * 1.2), M.plasticWhite, 'vacuum:grip', g);
-    grip.position.set(vX, 1.16, vZ + 0.02);
-    grip.rotation.set(0, Math.PI / 2, Math.PI * 0.4);
-    // 掛在機身上的黑色電線
-    const cord = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(vX + 0.02, 1.0, vZ + 0.01), new THREE.Vector3(vX + 0.05, 0.85, vZ + 0.0),
-      new THREE.Vector3(vX + 0.03, 0.75, vZ + 0.02), new THREE.Vector3(vX + 0.01, 0.95, vZ + 0.02),
-    ]);
-    mesh(new THREE.TubeGeometry(cord, 24, 0.004, 6, false), M.plasticBlack, 'vacuum:cord', g);
+    const head = mesh(G.roundedBox(0.26, 0.045, 0.1, 0.016, 3), M.plasticWhite, 'vacuum:head', g);
+    head.position.set(vX, 0.0225, vZ + 0.04);
+    const bumper = mesh(G.roundedBox(0.262, 0.016, 0.012, 0.005, 2), M.plasticBlack, 'vacuum:bumper', g);
+    bumper.position.set(vX, 0.009, vZ + 0.088);
+    const joint = mesh(new THREE.SphereGeometry(0.022, 20, 14), M.plasticBlack, 'vacuum:joint', g);
+    joint.position.set(vX, 0.05, vZ + 0.03);
+    tubeAt('vacuum:tube', M.plasticWhite, [[vX, 0.05, vZ + 0.03], [vX, 0.25, vZ + 0.025], [vX, 0.45, vZ + 0.02]], 0.016, g, { segments: 16, radial: 16 });
+    // 主機：車削成圓潤膠囊，下段是霧面集塵杯
+    lathe('vacuum:dustCup', M.glassFrosted, [[0, 0], [0.034, 0], [0.04, 0.008], [0.04, 0.14], [0, 0.14]], vX, 0.44, vZ + 0.03, 32, g).castShadow = false;
+    lathe('vacuum:body', M.plasticWhite, [
+      [0, 0], [0.036, 0], [0.042, 0.01], [0.044, 0.04], [0.044, 0.18], [0.04, 0.21], [0.028, 0.23], [0.016, 0.24], [0, 0.24],
+    ], vX, 0.58, vZ + 0.03, 40, g);
+    lathe('vacuum:collar', M.plasticBlack, [[0, 0], [0.043, 0], [0.045, 0.005], [0.045, 0.015], [0.043, 0.02], [0, 0.02]], vX, 0.575, vZ + 0.03, 40, g);
+    tubeAt('vacuum:upperTube', M.plasticWhite, [[vX, 0.8, vZ + 0.03], [vX, 0.95, vZ + 0.028], [vX, 1.08, vZ + 0.025]], 0.013, g, { segments: 12, radial: 14 });
+    // D 形握把（連續彎管）
+    tubeAt('vacuum:grip', M.plasticWhite, [
+      [vX, 1.07, vZ + 0.025], [vX, 1.13, vZ + 0.02], [vX, 1.18, vZ + 0.035], [vX, 1.19, vZ + 0.075],
+      [vX, 1.15, vZ + 0.095], [vX, 1.09, vZ + 0.07], [vX, 1.06, vZ + 0.04],
+    ], 0.012, g, { segments: 48, radial: 12 });
+    // 掛在機身上的黑色電線（繞兩圈垂下）
+    const cordPts = [];
+    for (let k = 0; k <= 28; k++) {
+      const t = k / 28;
+      const a = t * Math.PI * 4;
+      cordPts.push([vX + 0.05 + Math.cos(a) * 0.012, 1.0 - t * 0.2 - Math.sin(a) * 0.08 * (1 - t * 0.3), vZ + 0.0 + Math.sin(a) * 0.01]);
+    }
+    tubeAt('vacuum:cord', M.plasticBlack, cordPts, 0.0035, g, { segments: 120, radial: 6 });
   }
   // 掃把＋畚箕（靠北牆、近東北角）
   const bX = ewX - 0.3, bZ = nwZ + 0.08;
   {
     const g = group('broom', corner);
-    const pole = cyl('broom:pole', M.metalAluminium, 0.011, 0.011, 1.0, bX, 0.2, bZ, 12, g);
-    pole.rotation.z = 0.04;
-    cyl('broom:grip', M.plasticBlue, 0.013, 0.013, 0.12, bX - 0.02, 1.08, bZ, 12, g);
-    const head = mesh(new THREE.BoxGeometry(0.26, 0.05, 0.05), M.plasticBlue, 'broom:head', g);
-    head.position.set(bX + 0.005, 0.22, bZ + 0.09);
+    tubeAt('broom:pole', M.metalAluminium, [[bX + 0.004, 0.22, bZ + 0.09], [bX - 0.008, 0.7, bZ + 0.045], [bX - 0.02, 1.18, bZ + 0.005]], 0.011, g, { segments: 16, radial: 14 });
+    tubeAt('broom:grip', M.plasticBlue, [[bX - 0.018, 1.1, bZ + 0.012], [bX - 0.02, 1.18, bZ + 0.005], [bX - 0.021, 1.22, bZ + 0.003]], 0.0135, g, { segments: 8, radial: 14 });
+    const cap = mesh(new THREE.SphereGeometry(0.0135, 14, 10), M.plasticBlue, 'broom:gripCap', g);
+    cap.position.set(bX - 0.021, 1.22, bZ + 0.003);
+    const head = mesh(G.roundedBox(0.27, 0.05, 0.045, 0.012, 3), M.plasticBlue, 'broom:head', g);
+    head.position.set(bX + 0.005, 0.2, bZ + 0.1);
     head.rotation.x = -0.4;
-    const bristle = mesh(new THREE.BoxGeometry(0.28, 0.16, 0.04), M.plasticBlue, 'broom:bristles', g);
-    bristle.position.set(bX + 0.005, 0.12, bZ + 0.15);
+    const bristle = mesh(G.roundedBox(0.28, 0.15, 0.035, 0.006, 2), M.plasticBlue, 'broom:bristles', g);
+    bristle.position.set(bX + 0.005, 0.1, bZ + 0.145);
     bristle.rotation.x = -0.45;
-    // 畚箕：底板＋三面＋長柄
+    // 畚箕：倒角底板＋圓角側板＋彎管長柄
     const dpZ = bZ + 0.22;
     const dp = group('dustpan', corner);
-    boxAt('dustpan:base', M.plasticBlue, bX - 0.15, bX + 0.15, 0, 0.012, dpZ, dpZ + 0.28, dp);
-    boxAt('dustpan:back', M.plasticBlue, bX - 0.15, bX + 0.15, 0, 0.12, dpZ - 0.01, dpZ, dp);
-    boxAt('dustpan:sideW', M.plasticBlue, bX - 0.16, bX - 0.15, 0, 0.1, dpZ, dpZ + 0.26, dp);
-    boxAt('dustpan:sideE', M.plasticBlue, bX + 0.15, bX + 0.16, 0, 0.1, dpZ, dpZ + 0.26, dp);
-    boxAt('dustpan:label', M.paperWhite, bX - 0.1, bX + 0.1, 0.012, 0.014, dpZ + 0.06, dpZ + 0.2, dp, false);
-    const dh = cyl('dustpan:handle', M.plasticBlue, 0.01, 0.01, 0.6, bX + 0.06, 0.08, dpZ - 0.02, 10, dp);
-    dh.rotation.x = -0.1;
+    const dpb = mesh(G.extrudeRounded(G.roundedRectShape(0.3, 0.27, 0.03), 0.012, 0.003), M.plasticBlue, 'dustpan:base', dp);
+    dpb.position.set(bX, 0, dpZ + 0.135);
+    boxAt('dustpan:back', M.plasticBlue, bX - 0.15, bX + 0.15, 0, 0.12, dpZ - 0.012, dpZ, dp, true, 0.005, 2);
+    boxAt('dustpan:sideW', M.plasticBlue, bX - 0.16, bX - 0.148, 0, 0.1, dpZ - 0.012, dpZ + 0.25, dp, true, 0.005, 2);
+    boxAt('dustpan:sideE', M.plasticBlue, bX + 0.148, bX + 0.16, 0, 0.1, dpZ - 0.012, dpZ + 0.25, dp, true, 0.005, 2);
+    boxAt('dustpan:label', M.paperWhite, bX - 0.1, bX + 0.1, 0.012, 0.0135, dpZ + 0.06, dpZ + 0.2, dp, false, 0.0005);
+    tubeAt('dustpan:handle', M.plasticBlue, [[bX + 0.06, 0.1, dpZ - 0.006], [bX + 0.062, 0.4, dpZ - 0.03], [bX + 0.064, 0.66, dpZ - 0.06]], 0.01, dp, { segments: 12, radial: 12 });
   }
   // 紙箱（靠東牆，直立）
   {

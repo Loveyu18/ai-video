@@ -7,14 +7,14 @@
  *   大門掃掠範圍 L.doorSwingZone('front') 內不放任何東西
  */
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import * as L from '../layout.js';
 import { M } from '../materials.js';
 import { rngFor } from '../rng.js';
+import * as G from '../geo.js';
 
 const ROOM = 'entrance';
 const H = L.CEILING_HEIGHT;
-const CAB = { depth: 0.4, float: 0.15, colW: 0.47, gap: 0.006, openCol: 3 };
+const CAB = { depth: 0.4, float: 0.15, colW: 0.47, gap: 0.005, openCol: 3 };
 
 function mesh(geo, mat, name, { cast = true, receive = true } = {}) {
   const m = new THREE.Mesh(geo, mat);
@@ -23,13 +23,13 @@ function mesh(geo, mat, name, { cast = true, receive = true } = {}) {
   m.receiveShadow = receive;
   return m;
 }
-function slab(parent, mat, name, x0, x1, y0, y1, z0, z1, opts) {
-  const m = mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat, name, opts);
+function slab(parent, mat, name, x0, x1, y0, y1, z0, z1, opts, r = 0.003) {
+  const m = mesh(G.roundedBox(x1 - x0, y1 - y0, z1 - z0, r), mat, name, opts);
   m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   parent.add(m);
   return m;
 }
-const rbox = (w, h, d, r, seg = 2) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4));
+const rbox = (w, h, d, r) => G.roundedBox(w, h, d, r, 3);
 
 // ═══════════════════════════════════════════════════════
 // 落地鞋櫃
@@ -59,7 +59,7 @@ function buildShoeCabinet(rng, R) {
     const a = z0 + i * cw + C.gap / 2, b = z0 + (i + 1) * cw - C.gap / 2;
     if (i !== openCol) {
       // 整片落地門板（推開式，無把手）＋內部填實
-      slab(g, M.woodOak, 'cab:door', xf, xf + 0.02, C.float + 0.005, top - 0.025, a, b);
+      slab(g, M.woodOak, 'cab:door', xf, xf + 0.019, C.float + 0.005, top - 0.025, a, b, undefined, 0.004);
       slab(g, M.woodOak, 'cab:inner', xf + 0.02, R.x1 - 0.02, C.float + 0.02, top - 0.02, a + 0.004, b - 0.004, { cast: false });
       continue;
     }
@@ -76,7 +76,7 @@ function buildShoeCabinet(rng, R) {
       shoe.position.set(cx + rng.jitter(0, 0.015), C.float + 0.02 + 0.045, cz + dz);
       shoe.rotation.y = rng.jitter(0, 0.08);
       g.add(shoe);
-      const sole = mesh(new THREE.BoxGeometry(0.27, 0.02, 0.1), M.plasticWhite, 'open:sneakerSole');
+      const sole = mesh(rbox(0.27, 0.02, 0.1, 0.006), M.plasticWhite, 'open:sneakerSole');
       sole.position.set(shoe.position.x, C.float + 0.03, cz + dz);
       sole.rotation.y = shoe.rotation.y;
       g.add(sole);
@@ -91,14 +91,14 @@ function buildShoeCabinet(rng, R) {
     const basket = mesh(rbox(0.3, 0.2, cw - 0.07, 0.02), M.rattan, 'open:basket');
     basket.position.set(cx, 0.62 + 0.018 + 0.1, cz);
     g.add(basket);
-    const tray = mesh(new THREE.CylinderGeometry(0.1, 0.095, 0.015, 28), M.ceramicMatte, 'open:tray');
-    tray.position.set(cx, 1.8 + 0.018 + 0.0075, cz);
+    const tray = mesh(G.lathe([[0, 0], [0.095, 0], [0.1, 0.004], [0.102, 0.015], [0.097, 0.015], [0.092, 0.006], [0, 0.006]], 48), M.ceramicMatte, 'open:tray');
+    tray.position.set(cx, 1.8 + 0.018, cz);
     g.add(tray);
     const keys = mesh(new THREE.TorusGeometry(0.02, 0.003, 6, 16), M.metalBrass, 'open:keys', { cast: false });
     keys.rotation.x = Math.PI / 2;
     keys.position.set(cx + 0.02, 1.8 + 0.018 + 0.017, cz - 0.02);
     g.add(keys);
-    const vase = mesh(new THREE.LatheGeometry([[0, 0], [0.04, 0], [0.05, 0.06], [0.03, 0.15], [0.025, 0.16]].map(([r, y]) => new THREE.Vector2(r, y)), 20), M.ceramicRust, 'open:vase');
+    const vase = mesh(G.lathe([[0, 0], [0.038, 0], [0.046, 0.012], [0.052, 0.06], [0.04, 0.11], [0.026, 0.145], [0.03, 0.16], [0.025, 0.16], [0.02, 0.14]], 40), M.ceramicRust, 'open:vase');
     vase.position.set(cx, 2.25 + 0.018, cz);
     g.add(vase);
     // 開放格頂 LED
@@ -110,21 +110,32 @@ function buildShoeCabinet(rng, R) {
 // ═══════════════════════════════════════════════════════
 // 室內拖鞋
 // ═══════════════════════════════════════════════════════
-function slipper(name, mat, x, z, ry) {
+function slipper(name, mat, x, z, ry, rng) {
   const g = new THREE.Group();
   g.name = `${ROOM}:${name}`;
-  const sole = mesh(rbox(0.1, 0.024, 0.27, 0.011, 3), M.rubber, `${name}:sole`);
-  sole.position.y = 0.012;
-  const bed = mesh(rbox(0.094, 0.012, 0.262, 0.005, 2), mat, `${name}:footbed`, { cast: false });
-  bed.position.y = 0.027;
-  const strap = mesh(new THREE.TorusGeometry(0.046, 0.014, 8, 20, Math.PI), mat, `${name}:strap`);
-  strap.scale.set(1.08, 0.75, 2.4);
-  strap.position.set(0, 0.03, -0.07);
-  g.add(sole, bed, strap);
+  // 柔軟鞋底：兩層薄墊（mattress），前寬後窄靠縮放做出鞋型
+  const sole = mesh(G.mattress(0.1, 0.022, 0.27, { radius: 0.01, crown: 0.002 }), M.rubber, `${name}:sole`);
+  sole.position.y = 0.011;
+  const bed = mesh(G.mattress(0.094, 0.016, 0.262, { radius: 0.007, crown: 0.004, wrinkle: 0.001, rng }), mat, `${name}:footbed`);
+  bed.position.y = 0.028;
+  for (const m of [sole, bed]) {
+    const p = m.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const t = p.getZ(i) / 0.135;                 // -1 腳尖 → 1 腳跟
+      p.setX(i, p.getX(i) * (1 - 0.12 * Math.max(0, t) - 0.18 * Math.max(0, -t - 0.7) / 0.3));
+    }
+    m.geometry.computeVertexNormals();
+  }
+  // 鞋面：一條拱形圓管沿腳長方向壓扁成寬帶（柔軟布面）
+  const strap = G.tube([[-0.049, 0.03, 0], [-0.043, 0.058, 0], [0, 0.07, 0], [0.043, 0.058, 0], [0.049, 0.03, 0]], 0.012, { segments: 32, radial: 16 });
+  strap.scale(1, 1, 3.4);
+  strap.translate(0, 0, -0.055);
+  g.add(sole, bed, mesh(G.worldUV(strap), mat, `${name}:strap`));
   g.position.set(x, 0, z);
   g.rotation.y = ry;
   return g;
 }
+
 
 export function build() {
   const rng = rngFor(ROOM);
@@ -143,13 +154,13 @@ export function build() {
   const zs = swing.z1 + 0.35;
   const pairs = [
     [R.x0 + 0.25, zs + 0.15, M.fabricGreyThrow],
-    [R.x0 + 0.5, zs + 0.18, M.fabricTaupe],
+    [R.x0 + 0.5, zs + 0.18, M.fabricBlush],
     [cab.xf - 0.35, zs + 0.55, M.fabricGreyThrow],
   ];
   pairs.forEach(([x, z, mat], i) => {
     const ry = Math.PI + rng.jitter(0, 0.12);     // 腳尖朝南：進門後直接套上
-    root.add(slipper(`slipper${i}L`, mat, x - 0.06, z + rng.jitter(0, 0.02), ry));
-    root.add(slipper(`slipper${i}R`, mat, x + 0.06, z + rng.jitter(0, 0.02), ry + rng.jitter(0, 0.08)));
+    root.add(slipper(`slipper${i}L`, mat, x - 0.06, z + rng.jitter(0, 0.02), ry, rng.fork(`s${i}L`)));
+    root.add(slipper(`slipper${i}R`, mat, x + 0.06, z + rng.jitter(0, 0.02), ry + rng.jitter(0, 0.08), rng.fork(`s${i}R`)));
   });
   return root;
 }

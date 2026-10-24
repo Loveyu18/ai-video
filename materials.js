@@ -206,7 +206,7 @@ export const M = {
   // —— 依實拍新增 ——
   panelGreige:      std(0xcdbfb1, 0.95),            // 灰褐仿麂皮系統板材（客廳整面牆）
   fabricBoucle:     std(0xd2c7b8, 1.0),             // 毛圈布（弧形沙發、小凳）
-  fabricGreyThrow:  std(0x6e6a67, 1.0),             // 深灰針織毯
+  fabricGreyThrow:  std(0x63666b, 1.0),             // 深灰針織毯
   fabricBrownKnit:  std(0x7f624d, 1.0),             // 焦糖色針織床旗
   fabricTaupe:      std(0x6f6460, 1.0),             // 灰褐抱枕
   sheerCurtain:     new THREE.MeshStandardMaterial({ color: 0xf6f3ee, roughness: 1, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }), // 白紗簾
