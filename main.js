@@ -8,7 +8,7 @@
  *   ?room=kitchen&view=top     廚房正上方俯視（拿掉天花）
  *   ?cam=3.4,1.45,2.85&look=2.8,1.0,0.7[&fov=70]  自訂鏡頭位置與注視點
  *   ?t=12.5                    影片運鏡在第 12.5 秒的畫面（layout.CAMERA_PATH）
- *   ?play=1                    在瀏覽器即時播放 60 秒運鏡（可加 &t= 起始秒數）
+ *   ?play=1                    訪客播放器：點「開始」後播放 60 秒導覽（含旁白，可加 &t= 起始秒數）
  *   ?render=1                  逐格輸出影片（由 tools/render.mjs 驅動，不要手動開）
  *   &ao=0                      關掉環境遮蔽（比較用）
  *   &nocap=1                   不顯示字卡（片頭標題、房間名稱、片尾）
@@ -26,6 +26,7 @@ import { buildShell } from './shell.js';
 import { cameraAt, applyCamera } from './camera.js';
 import { drawCaptions } from './captions.js';
 import { createGuide } from './guide.js';
+import { showLanding, createPlayer } from './ui.js';
 
 export const AREAS = ['living', 'masterBed', 'secondBed', 'kitchen', 'bathroom', 'balcony', 'entrance', 'smallRoom', 'hall'];
 
@@ -181,7 +182,8 @@ if (params.has('render')) {
 } else if (timeline) {
   // ═══ 預覽：?t= 停在某一秒；?play=1 即時播放 ═══
   let t0 = Number(params.get('t') ?? 0);
-  const start = performance.now();
+  // ?play=1：給訪客的播放器（點開始才播放，畫面跟著旁白音軌走）
+  const player = params.has('play') ? createPlayer(t0, './output/soundtrack.mp3') : null;
   const resize = () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
@@ -195,7 +197,7 @@ if (params.has('render')) {
   const octx = overlay.getContext('2d');
   let frames = 0;
   renderer.setAnimationLoop(() => {
-    const t = params.has('play') ? (t0 + (performance.now() - start) / 1000) % L.VIDEO.duration : t0;
+    const t = player ? player.time() : t0;
     const state = cameraAt(t);
     applyCamera(state, camera, ceilingObjects, renderer, 1, aerialObjects);
     guide.update(t, camera);
@@ -210,6 +212,7 @@ if (params.has('render')) {
 } else {
   // ═══ 一般預覽（OrbitControls） ═══
   const controls = new OrbitControls(camera, renderer.domElement);
+  if (!location.search) showLanding();     // 沒有任何參數＝訪客首頁
   if (view === 'top') for (const o of ceilingObjects) o.visible = false;
   const aerialView = view === 'top' && !focusRoom && !params.has('cam');
   for (const o of aerialObjects) o.visible = aerialView;
@@ -240,8 +243,10 @@ if (params.has('render')) {
     }
   } else {
     const [cx, cz] = L.rectCenter(L.BOUNDS);
-    camera.position.set(cx + 2, 15, cz + 11);
-    controls.target.set(cx, 0, cz);
+    // 首頁有面板蓋在下方，注視點往前移，讓房子顯示在畫面上半部
+    const shift = location.search ? 0 : 2.6;
+    camera.position.set(cx + 2, 15, cz + 11 + shift);
+    controls.target.set(cx, 0, cz + shift);
   }
   controls.update();
 

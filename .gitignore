@@ -1,3 +1,6 @@
 node_modules/
-output/
+# 輸出資料夾只收網頁需要的小檔：旁白音軌 mp3、嘴型資料
+output/*
+!output/soundtrack.mp3
+!output/lipsync.json
 image/

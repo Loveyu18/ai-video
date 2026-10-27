@@ -94,7 +94,9 @@ export function buildSoundtrack() {
     `[duck][vout]amix=inputs=2:normalize=0,alimiter=limit=0.9,atrim=0:${VIDEO.duration}[out]`,
   ].join(';');
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', '-ar', '44100', OUT], { stdio: 'inherit' });
-  console.log(`音軌完成：${OUT}`);
+  // 網頁播放用的小檔（GitHub Pages 會用到；wav 太大不進 git）
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', OUT, '-c:a', 'libmp3lame', '-b:a', '128k', OUT.replace(/\.wav$/, '.mp3')], { stdio: 'inherit' });
+  console.log(`音軌完成：${OUT}（網頁用 mp3 也已更新）`);
   return OUT;
 }
 

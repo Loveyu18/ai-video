@@ -3,18 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Interior Preview</title>
+  <title>Warm Home · 室內設計 3D 導覽</title>
+  <meta name="description" content="全程式生成的室內設計 3D 導覽：無模型、無貼圖、無照片，用 three.js 即時渲染。" />
   <style>html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1712; }</style>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "./node_modules/three/build/three.module.js",
-        "three/addons/": "./node_modules/three/examples/jsm/",
-        "three/examples/jsm/": "./node_modules/three/examples/jsm/",
-        "three-mesh-bvh": "./node_modules/three-mesh-bvh/build/index.module.js",
-        "three-gpu-pathtracer": "./node_modules/three-gpu-pathtracer/build/index.module.js"
-      }
-    }
+  <script>
+    // 本機開發用 node_modules；放到網站（GitHub Pages）時改從 CDN 載入，版本與 package.json 一致
+    (() => {
+      const local = ['localhost', '127.0.0.1'].includes(location.hostname);
+      const cdn = 'https://cdn.jsdelivr.net/npm/';
+      const src = local
+        ? { three: './node_modules/three/', bvh: './node_modules/three-mesh-bvh/', pt: './node_modules/three-gpu-pathtracer/' }
+        : { three: cdn + 'three@0.160.0/', bvh: cdn + 'three-mesh-bvh@0.7.8/', pt: cdn + 'three-gpu-pathtracer@0.0.20/' };
+      const map = {
+        imports: {
+          three: src.three + 'build/three.module.js',
+          'three/addons/': src.three + 'examples/jsm/',
+          'three/examples/jsm/': src.three + 'examples/jsm/',
+          'three-mesh-bvh': src.bvh + 'build/index.module.js',
+          'three-gpu-pathtracer': src.pt + 'build/index.module.js',
+        },
+      };
+      const s = document.createElement('script');
+      s.type = 'importmap';
+      s.textContent = JSON.stringify(map);
+      document.currentScript.after(s);
+    })();
   </script>
 </head>
 <body>
