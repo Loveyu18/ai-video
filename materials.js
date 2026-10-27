@@ -141,6 +141,7 @@ export const M = {
   floorOutdoorTile: std(0xffffff, 0.85, 0, { ...withMap(tileTexture('floorOutdoor', 0.3, [32, 10, 64], '#8f877d')), color: HAS_DOM ? 0xffffff : 0xa59d92 }),
   baseboard:        std(0xe9e0d3, 0.6),
   concrete:         std(0x9a948c, 0.95),            // 雨遮、柱子、外牆面
+  plinth:           std(0xcfc5b8, 0.9),             // 鳥瞰時的展示底座
 
   // —— 木作 ——
   woodOak:          std(0xdcbf98, 0.6),             // 淺橡木系統櫃（實拍主色）

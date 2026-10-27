@@ -7,7 +7,7 @@ import * as L from './layout.js';
 import { M, TEXTURE_METERS } from './materials.js';
 
 const H = L.CEILING_HEIGHT;
-const DOOR_OPEN_ANGLE = THREE.MathUtils.degToRad(75);
+const DEFAULT_OPEN_ANGLE = 75;   // 度；個別門可在 layout.DOORS 用 openAngle 覆寫
 const FRAME = 0.05;           // 門框／窗框寬
 const LEAF_T = 0.04;          // 門片厚
 
@@ -123,9 +123,10 @@ function swingDoor(id, d) {
   // 關門方向與房間法向量（xz）
   const closed = axis === 'x' ? [along, 0] : [0, along];
   const normal = axis === 'x' ? [0, side] : [side, 0];
+  const ang = THREE.MathUtils.degToRad(d.openAngle ?? DEFAULT_OPEN_ANGLE);
   const dir = [
-    closed[0] * Math.cos(DOOR_OPEN_ANGLE) + normal[0] * Math.sin(DOOR_OPEN_ANGLE),
-    closed[1] * Math.cos(DOOR_OPEN_ANGLE) + normal[1] * Math.sin(DOOR_OPEN_ANGLE),
+    closed[0] * Math.cos(ang) + normal[0] * Math.sin(ang),
+    closed[1] * Math.cos(ang) + normal[1] * Math.sin(ang),
   ];
 
   const pivot = new THREE.Group();
@@ -289,6 +290,10 @@ function buildExterior() {
   const slab = mesh(new THREE.BoxGeometry(bw + 2.4, 0.25, bd + 2.4), M.concrete, 'slab');
   slab.position.set(bcx, -0.13, bcz);
   g.add(slab);
+  // 展示底座：鳥瞰時整間屋子像放在平台上的建築模型，接住房子的影子
+  const plinth = mesh(new THREE.CylinderGeometry(14, 14.3, 0.4, 96), M.plinth, 'plinth', { cast: false });
+  plinth.position.set(bcx, -0.26 - 0.2 - 1.2, bcz);
+  g.add(plinth);
   const roof = slab.clone();
   roof.name = 'roof';
   roof.position.y = H + 0.13;

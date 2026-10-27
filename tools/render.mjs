@@ -1,4 +1,4 @@
-// 輸出影片：node tools/render.mjs [輸出.mp4] [--from=格] [--to=格] [--cpu]
+// 輸出影片：node tools/render.mjs [輸出.mp4] [--from=格] [--to=格] [--cpu] [--music=音樂檔] [--nomusic]
 //   --pt=64：改用路徑追蹤，每格 64 次取樣（擬真但慢很多）
 //   預設用 GPU（約 6 格/秒）；--cpu 改用 SwiftShader 軟體渲染（約 0.3 格/秒，沒有顯卡時用）
 //   預設輸出 output/tour.mp4（layout.VIDEO：1920×1080、30fps、60 秒）
@@ -23,18 +23,33 @@ const to = opt('to', total);
 const useGpu = !args.includes('--cpu');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 
+// Chrome 優先（Edge 自動更新時版本資料夾可能暫時不見）；可用環境變數 BROWSER 指定
 const BROWSERS = [
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  process.env.BROWSER,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-];
+].filter(Boolean);
 const browserPath = BROWSERS.find((p) => fs.existsSync(p));
 if (!browserPath) { console.error('找不到 Edge/Chrome'); process.exit(1); }
 
-// —— ffmpeg：從 stdin 收 JPEG 序列 ——
+// —— 配樂：完整輸出時才加；沒有就用 tools/music.mjs 程式生成；--music=路徑 可換成自己的音樂，--nomusic 不加 ——
+const musicArg = args.find((a) => a.startsWith('--music='))?.split('=')[1];
+let music = null;
+if (!args.includes('--nomusic') && from === 0 && to === total) {
+  music = path.resolve(musicArg ?? 'output/music.wav');
+  if (!fs.existsSync(music)) {
+    const { generateMusic } = await import('./music.mjs');
+    generateMusic(music);
+    console.log(`已生成配樂 ${music}`);
+  }
+}
+
+// —— ffmpeg：從 stdin 收 JPEG 序列（＋配樂） ——
 const ffmpeg = spawn('ffmpeg', [
   '-y', '-loglevel', 'error',
   '-f', 'image2pipe', '-framerate', String(VIDEO.fps), '-c:v', 'mjpeg', '-i', '-',
+  ...(music ? ['-i', music, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '192k', '-shortest'] : []),
   '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
   out,
 ], { stdio: ['pipe', 'inherit', 'inherit'] });

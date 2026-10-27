@@ -358,10 +358,29 @@ function buildSofa(rng, xWall, zc, halfLen) {
   });
 
   // 灰色針織毯：搭在北端扶手上，兩側自然垂下
-  const armZ = czN - capR * capN + w / 2;          // 扶手帶中線（北端頂點）
-  const throwG = G.drapeOver({ w: 0.34, d: 0.19, overhang: { z0: 0.4, z1: 0.24, x0: 0.02, x1: 0.02 }, thickness: 0.01, wrinkle: 0.03, edgeRadius: 0.085, flare: 0.07, res: 0.02, rng: rng.fork('throw') });
-  const th = add(g, throwG, M.fabricGreyThrow, 'sofa:throw', cxN + 0.03, S.backH - 0.06 + 0.02, armZ);
-  th.rotation.y = 0.12;
+  //   drapeOver 先在平面上產生（本地 x 沿扶手、z 橫跨扶手），再把每個頂點沿北端扶手的圓弧彎過去，
+  //   並依靠背頂緣的實際高度（兩端緩降）逐點貼合，避免兩端浮起。
+  const Rm = capR - w / 2;                          // 扶手帶中線半徑
+  const armDrop = (z) => {                          // 與靠背頂緣變形相同的下降量
+    const tt = THREE.MathUtils.clamp((z - zc) / halfLen, -1.6, 1.6);
+    return 0.06 * smoothstep(0.55, 1.4, Math.abs(tt));
+  };
+  const throwG = G.drapeOver({ w: 0.42, d: 0.23, overhang: { z0: 0.4, z1: 0.24, x0: 0.02, x1: 0.02 }, thickness: 0.01, wrinkle: 0.03, edgeRadius: 0.085, flare: 0.07, res: 0.02, rng: rng.fork('throw') });
+  {
+    const p = throwG.attributes.position;
+    const a0 = -Math.PI / 2 - 0.12;                 // 扶手頂點方位，略往背側偏
+    for (let i = 0; i < p.count; i++) {
+      const lx = p.getX(i), ly = p.getY(i), lz = p.getZ(i);
+      const a = a0 + lx / Rm;                       // 沿弧長 → 角度
+      const rad = Rm - lz;                          // 本地 +z 指向扶手內側（圓心）
+      const x = cxN + Math.cos(a) * rad;
+      const z = czN + Math.sin(a) * rad * capN;
+      p.setXYZ(i, x, S.backH - armDrop(z) + 0.012 + ly, z);
+    }
+    throwG.computeVertexNormals();
+    G.worldUV(throwG);
+  }
+  add(g, throwG, M.fabricGreyThrow, 'sofa:throw', 0, 0, 0);
   return { g, frontMid: X0 + S.depth + r, zN: czN - capR * capN - r };
 }
 

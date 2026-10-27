@@ -92,10 +92,11 @@ export const WALLS = {
 //   from/to：沿牆方向的絕對座標（水平牆＝x，垂直牆＝z）
 //   hinge  ：鉸鏈端座標（from 或 to 其中之一）
 //   opensInto：門片往哪個房間開
+//   openAngle：門片開啟角度（度，預設 75）
 // ═══════════════════════════════════════════════════════
 export const DOORS = {
   front:     { name: '大門',     wall: 'extTopEntry',    from: 7.6,  to: 8.5,  kind: 'swing',   hinge: 7.6,  opensInto: 'entrance'  },
-  kitchen:   { name: '廚房門',   wall: 'row1Bottom',     from: 3.1,  to: 3.85, kind: 'swing',   hinge: 3.85, opensInto: 'kitchen'   },
+  kitchen:   { name: '廚房門',   wall: 'row1Bottom',     from: 3.1,  to: 3.85, kind: 'swing',   hinge: 3.85, opensInto: 'kitchen', openAngle: 140 }, // 開大貼牆，不擋影片鏡頭
   bathroom:  { name: '廁所門',   wall: 'bathShaft',      from: 1.95, to: 2.7,  kind: 'swing',   hinge: 2.7,  opensInto: 'bathroom'  }, // 實拍：門開在洗手台區那面
   balcony:   { name: '陽台門',   wall: 'row1Bottom',     from: 1.4,  to: 2.15, kind: 'swing',   hinge: 2.15, opensInto: 'balcony'   },
   smallRoom: { name: '小房玻璃拉門', wall: 'smallRoomRight', from: 3.3, to: 5.2, kind: 'sliding', panels: 2, glass: true },
@@ -167,40 +168,45 @@ export const LIGHTING = {
 //   ceilings:false 表示鳥瞰（拿掉天花與屋頂）
 //   鏡頭點都避開了家具與開著的門片；改家具後請用 ?t=秒數 預覽確認
 // ═══════════════════════════════════════════════════════
-export const VIDEO = { duration: 60, fps: 30, width: 1920, height: 1080, fade: 0.35 };
+export const VIDEO = {
+  duration: 60, fps: 30, width: 1920, height: 1080, fade: 0.35,
+  // 字卡（captions.js 畫在影片上）：片頭標題、每個鏡頭的 caption、片尾
+  title: { start: 0.8, end: 6.2, main: 'WARM HOME', sub: '暖光住宅．室內設計 3D 導覽' },
+  ending: { start: 57.9, end: 60, main: 'WARM HOME', sub: '全程式生成．無模型、無貼圖、無照片｜three.js' },
+};
 
 export const CAMERA_PATH = [
   { name: '全屋鳥瞰', start: 0, end: 7, fov: 40, ceilings: false,
     pos: [[15, 14, 12], [11, 12, 15], [6, 11, 15.5]],
     look: [[4.9, 0, 4.3], [4.9, 0, 4.5]] },
-  { name: '玄關進門', start: 7, end: 13, fov: 68,
+  { name: '玄關進門', caption: ['01', '玄關', 'ENTRANCE'], start: 7, end: 13, fov: 68,
     pos: [[8.1, 1.55, 0.6], [8.2, 1.55, 2.2]],
     look: [[8.4, 1.2, 4.0], [8.0, 1.0, 7.5]] },
-  { name: '客廳往窗', start: 13, end: 21, fov: 68,
+  { name: '客廳往窗', caption: ['02', '客廳', 'LIVING ROOM'], start: 13, end: 21, fov: 68,
     pos: [[8.3, 1.5, 3.4], [8.2, 1.4, 4.6], [8.15, 1.35, 5.6]],
     look: [[8.2, 1.0, 8.5], [8.1, 0.9, 8.5]] },
-  { name: '客廳回望餐廳', start: 21, end: 27, fov: 68,
+  { name: '客廳回望餐廳', caption: ['03', '餐廳', 'DINING'], start: 21, end: 27, fov: 68,
     pos: [[7.6, 1.45, 8.0], [7.9, 1.5, 7.2]],
     look: [[8.6, 1.1, 2.5], [8.4, 1.1, 1.0]] },
-  { name: '廚房', start: 27, end: 32, fov: 72,
+  { name: '廚房', caption: ['04', '廚房', 'KITCHEN'], start: 27, end: 32, fov: 72,
     pos: [[3.55, 1.5, 3.4], [3.45, 1.45, 2.6]],
     look: [[2.8, 1.0, 0.7], [2.7, 1.0, 0.7]] },
-  { name: '洗手台區', start: 32, end: 38, fov: 68,
+  { name: '洗手台區', caption: ['05', '洗手台', 'VANITY'], start: 32, end: 38, fov: 68,
     pos: [[6.9, 1.5, 4.5], [6.9, 1.5, 3.3]],
     look: [[6.9, 1.1, 1.3], [6.4, 1.1, 1.4]] },
-  { name: '廁所', start: 38, end: 42, fov: 72,
+  { name: '廁所', caption: ['06', '衛浴', 'BATHROOM'], start: 38, end: 42, fov: 72,
     pos: [[6.45, 1.6, 2.25], [5.95, 1.6, 2.1]],
     look: [[4.95, 1.2, 1.0], [4.95, 1.1, 0.9]] },
-  { name: '主臥', start: 42, end: 48, fov: 72,
+  { name: '主臥', caption: ['07', '主臥', 'MASTER BEDROOM'], start: 42, end: 48, fov: 72,
     pos: [[3.3, 1.55, 5.85], [3.0, 1.5, 6.3]],
     look: [[1.5, 1.0, 8.0], [0.8, 1.0, 7.6]] },
-  { name: '小房', start: 48, end: 52, fov: 72,
+  { name: '小房', caption: ['08', '小房', 'STUDY'], start: 48, end: 52, fov: 72,
     pos: [[3.1, 1.5, 4.95], [2.3, 1.5, 4.9]],
     look: [[0.5, 0.9, 3.7], [0.5, 0.9, 3.6]] },
-  { name: '次臥', start: 52, end: 55.5, fov: 72,
+  { name: '次臥', caption: ['09', '次臥', 'BEDROOM'], start: 52, end: 55.5, fov: 72,
     pos: [[4.7, 1.55, 5.85], [4.85, 1.5, 6.25]],
     look: [[5.6, 0.8, 8.0], [5.8, 0.8, 8.0]] },
-  { name: '陽台夕陽', start: 55.5, end: 60, fov: 70,
+  { name: '陽台夕陽', caption: ['10', '陽台', 'BALCONY'], start: 55.5, end: 60, fov: 70,
     pos: [[1.75, 1.5, 3.15], [1.3, 1.5, 2.2]],
     look: [[0.3, 1.2, 1.2], [0.0, 1.3, 1.4]] },
 ];

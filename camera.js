@@ -33,7 +33,7 @@ export function cameraAt(t) {
 }
 
 /** 套用到 three.js 相機與場景（ceilingObjects：鳥瞰時要隱藏的物件） */
-export function applyCamera(state, camera, ceilingObjects, renderer, baseExposure = 1) {
+export function applyCamera(state, camera, ceilingObjects, renderer, baseExposure = 1, aerialObjects = []) {
   camera.position.copy(state.position);
   camera.lookAt(state.target);
   if (camera.fov !== state.fov) {
@@ -41,5 +41,6 @@ export function applyCamera(state, camera, ceilingObjects, renderer, baseExposur
     camera.updateProjectionMatrix();
   }
   for (const o of ceilingObjects) o.visible = state.ceilings;
+  for (const o of aerialObjects) o.visible = !state.ceilings;   // 展示底座只在鳥瞰時出現
   renderer.toneMappingExposure = baseExposure * state.fade;
 }

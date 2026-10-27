@@ -11,6 +11,7 @@
  *   ?play=1                    在瀏覽器即時播放 60 秒運鏡（可加 &t= 起始秒數）
  *   ?render=1                  逐格輸出影片（由 tools/render.mjs 驅動，不要手動開）
  *   &ao=0                      關掉環境遮蔽（比較用）
+ *   &nocap=1                   不顯示字卡（片頭標題、房間名稱、片尾）
  *   &pt=64                     搭配 render：用路徑追蹤，每格 64 次取樣（tools/render.mjs --pt=64）
  */
 import * as THREE from 'three';
@@ -22,6 +23,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import * as L from './layout.js';
 import { buildShell } from './shell.js';
 import { cameraAt, applyCamera } from './camera.js';
+import { drawCaptions } from './captions.js';
 
 export const AREAS = ['living', 'masterBed', 'secondBed', 'kitchen', 'bathroom', 'balcony', 'entrance', 'smallRoom', 'hall'];
 
@@ -109,6 +111,10 @@ const ceilingObjects = [];
 scene.traverse((o) => {
   if (o.name === 'ceilings' || o.name === 'roof' || o.name.startsWith('ceilingFixture:')) ceilingObjects.push(o);
 });
+// —— 只在鳥瞰時出現的物件（展示底座） ——
+const aerialObjects = [];
+scene.traverse((o) => { if (o.name === 'plinth') aerialObjects.push(o); });
+const showCaptions = !params.has('nocap');
 
 const timeline = params.has('t') || params.has('play') || params.has('render');
 const finish = () => {
@@ -139,16 +145,23 @@ if (params.has('render')) {
     tracer = createPathTracer(renderer, scene, camera);
     tracer.setSize(width, height);
   }
+  // 合成用畫布：3D 畫面 + 字卡
+  const comp = document.createElement('canvas');
+  comp.width = width;
+  comp.height = height;
+  const cctx = comp.getContext('2d');
   for (let f = from; f < to; f++) {
     const state = cameraAt(f / fps);
-    applyCamera(state, camera, ceilingObjects, renderer);
+    applyCamera(state, camera, ceilingObjects, renderer, 1, aerialObjects);
     if (tracer) {
       tracer.prepare(state.ceilings);
       tracer.render(ptSamples);
     } else {
       draw();
     }
-    const blob = await new Promise((r) => renderer.domElement.toBlob(r, 'image/jpeg', quality));
+    cctx.drawImage(renderer.domElement, 0, 0, width, height);
+    if (showCaptions) drawCaptions(cctx, f / fps, width, height);
+    const blob = await new Promise((r) => comp.toBlob(r, 'image/jpeg', quality));
     await fetch(`/frame?i=${f}`, { method: 'POST', body: blob });
   }
   await fetch('/done', { method: 'POST', body: JSON.stringify({ errors }) });
@@ -163,19 +176,30 @@ if (params.has('render')) {
     setRenderSize(innerWidth, innerHeight, Math.min(devicePixelRatio, 2));
   };
   addEventListener('resize', resize);
+  // 字卡疊在 3D 畫面上
+  const overlay = document.createElement('canvas');
+  Object.assign(overlay.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', pointerEvents: 'none' });
+  document.body.appendChild(overlay);
+  const octx = overlay.getContext('2d');
   let frames = 0;
   renderer.setAnimationLoop(() => {
     const t = params.has('play') ? (t0 + (performance.now() - start) / 1000) % L.VIDEO.duration : t0;
     const state = cameraAt(t);
-    applyCamera(state, camera, ceilingObjects, renderer);
+    applyCamera(state, camera, ceilingObjects, renderer, 1, aerialObjects);
     if (params.has('play')) document.title = `${t.toFixed(1)}s · ${state.shot}`;
     draw();
+    const r = Math.min(devicePixelRatio, 2);
+    if (overlay.width !== innerWidth * r) { overlay.width = innerWidth * r; overlay.height = innerHeight * r; }
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    if (showCaptions) drawCaptions(octx, t, overlay.width, overlay.height);
     if (++frames === 3) finish();
   });
 } else {
   // ═══ 一般預覽（OrbitControls） ═══
   const controls = new OrbitControls(camera, renderer.domElement);
   if (view === 'top') for (const o of ceilingObjects) o.visible = false;
+  const aerialView = view === 'top' && !focusRoom && !params.has('cam');
+  for (const o of aerialObjects) o.visible = aerialView;
 
   // ?cam=x,y,z&look=x,y,z 可指定任意鏡頭（預覽、運鏡規劃用）
   const cam = params.get('cam')?.split(',').map(Number);

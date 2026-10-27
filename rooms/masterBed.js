@@ -222,8 +222,8 @@ export function build() {
     g.add(runner);
 
     // 枕頭與抱枕：立著、往床頭倒、互相倚靠
-    const pillow = (name, w, h, d, m, x, z, lean, yaw, roll, r2, piping) => {
-      const o = mk(G.cushion(w, h, d, { seam: 0.1, wrinkle: 0.009, rng: r2, segments: 24 }), m, name);
+    const pillow = (name, w, h, d, m, x, z, lean, yaw, roll, r2, piping, { seam = 0.1, wrinkle = 0.009 } = {}) => {
+      const o = mk(G.cushion(w, h, d, { seam, wrinkle, rng: r2, segments: 24 }), m, name);
       if (piping) o.add(pipingLoop(w, h, d, 0.12, 0.1, `${name}:piping`));
       o.rotation.set(-Math.PI / 2 - lean, yaw, roll, 'YXZ');
       o.position.set(x, 0, z);
@@ -239,7 +239,8 @@ export function build() {
     g.add(pillow('bed:cushionTaupe', 0.46, 0.2, 0.46, M.fabricTaupe, bedCx + 0.3, matZ0 + 0.33, 0.45, 0.1, 0.05, br.fork('t2')));
     // 前排：米色織紋抱枕斜靠在灰褐抱枕上
     g.add(pillow('bed:cushionOat', 0.42, 0.19, 0.42, M.fabricOat, bedCx - 0.14, matZ0 + 0.47, 0.6, 0.2, 0.12, br.fork('o1')));
-    g.add(pillow('bed:cushionLinen', 0.55, 0.17, 0.34, M.fabricLinen, bedCx + 0.52, matZ0 + 0.5, 0.62, -0.22, -0.08, br.fork('o2')));
+    // 腰枕：加厚、邊緣縫線較厚、皺褶多一點，避免看起來像硬板
+    g.add(pillow('bed:cushionLinen', 0.55, 0.24, 0.34, M.fabricLinen, bedCx + 0.52, matZ0 + 0.5, 0.62, -0.22, -0.08, br.fork('o2'), false, { seam: 0.06, wrinkle: 0.016 }));
     return g;
   }
 
