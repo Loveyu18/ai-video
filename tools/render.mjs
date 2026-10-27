@@ -1,4 +1,4 @@
-// 輸出影片：node tools/render.mjs [輸出.mp4] [--from=格] [--to=格] [--cpu] [--music=音樂檔] [--nomusic]
+// 輸出影片：node tools/render.mjs [輸出.mp4] [--from=格] [--to=格] [--cpu] [--music=音樂檔] [--novoice] [--nomusic]
 //   --pt=64：改用路徑追蹤，每格 64 次取樣（擬真但慢很多）
 //   預設用 GPU（約 6 格/秒）；--cpu 改用 SwiftShader 軟體渲染（約 0.3 格/秒，沒有顯卡時用）
 //   預設輸出 output/tour.mp4（layout.VIDEO：1920×1080、30fps、60 秒）
@@ -33,15 +33,27 @@ const BROWSERS = [
 const browserPath = BROWSERS.find((p) => fs.existsSync(p));
 if (!browserPath) { console.error('找不到 Edge/Chrome'); process.exit(1); }
 
-// —— 配樂：完整輸出時才加；沒有就用 tools/music.mjs 程式生成；--music=路徑 可換成自己的音樂，--nomusic 不加 ——
+// —— 聲音（只在完整輸出時加）：預設旁白＋配樂；--novoice 只要配樂；--music=路徑 換成自己的音樂；--nomusic 不加聲音 ——
 const musicArg = args.find((a) => a.startsWith('--music='))?.split('=')[1];
 let music = null;
 if (!args.includes('--nomusic') && from === 0 && to === total) {
-  music = path.resolve(musicArg ?? 'output/music.wav');
-  if (!fs.existsSync(music)) {
-    const { generateMusic } = await import('./music.mjs');
-    generateMusic(music);
-    console.log(`已生成配樂 ${music}`);
+  if (musicArg) {
+    music = path.resolve(musicArg);
+  } else if (!args.includes('--novoice')) {
+    // 旁白＋配樂（tools/voice.mjs；旁白有快取，只有稿子改了才重新合成）
+    try {
+      const { buildSoundtrack } = await import('./voice.mjs');
+      music = buildSoundtrack();
+    } catch (e) {
+      console.warn(`旁白合成失敗，改用純配樂：${e.message}`);
+    }
+  }
+  if (!music) {
+    music = path.resolve('output/music.wav');
+    if (!fs.existsSync(music)) {
+      const { generateMusic } = await import('./music.mjs');
+      generateMusic(music);
+    }
   }
 }
 
@@ -99,7 +111,7 @@ const server = await startServer(0, (req, res) => {
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'render-'));
 const pt = opt('pt', 0);
-const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}${pt ? `&pt=${pt}` : ''}`;
+const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}${pt ? `&pt=${pt}` : ''}${args.includes('--noguide') ? '&noguide=1' : ''}`;
 console.log(`輸出 ${out}\n格 ${from}~${to}（共 ${to - from} 格，${VIDEO.width}×${VIDEO.height} @ ${VIDEO.fps}fps）`);
 browser = execFile(browserPath, [
   '--headless=new', '--hide-scrollbars', '--mute-audio',

@@ -236,6 +236,18 @@ export const M = {
   veggieGreen:      std(0x6a9a3a, 0.6),
   screenOn:         glow(0xdfe6ec, 0.5),
 
+  // —— 導覽員角色（guide.js）：依屋主提供的照片取外型與配色 ——
+  skin:             std(0xedc3a0, 0.55),            // 膚色
+  cottonWhite:      std(0xf5f3ef, 0.9),             // 白色棉 T（細緻，不用織紋）
+  hairBlack:        std(0x17120f, 0.42),            // 黑髮（有光澤）
+  eyeDark:          std(0x1a1210, 0.08),            // 瞳孔（亮面）
+  lip:              std(0x8a4a42, 0.6),             // 嘴巴
+  denimNavy:        std(0x1d2436, 0.85),            // 深藍長褲
+  canvasKhaki:      std(0xcdbb92, 0.9),             // 卡其色後背包
+  webbingBlack:     std(0x1c1c1c, 0.75),            // 黑色背帶
+  logoBlue:         std(0x8ccbe8, 0.6),             // T 恤胸前的淺藍圖案
+  watchPink:        std(0xf1dcd4, 0.4),             // 淺粉錶帶
+
   // —— 發光（暖色，燈罩與燈泡） ——
   lampShade:        glow(LIGHT_COLORS.k2700, 0.6),   // 燈罩（半透光感）
   lampBulb:         glow(LIGHT_COLORS.k2700, 3.0),   // 燈泡本體
@@ -402,4 +414,9 @@ for (const key of ['paintWhite', 'paintCream', 'paintSage', 'paintCharcoal', 'do
 for (const key of ['ceramicWhite', 'tileWallWhite', 'tileWallGreen']) upgrade(key, { clearcoat: 0.8, clearcoatRoughness: 0.08 });
 for (const key of ['stoneCountertop', 'marbleWhite', 'marbleTileWall']) upgrade(key, { clearcoat: 0.5, clearcoatRoughness: 0.12 });
 upgrade('ceramicMatte', { normalMap: TEX.micro, normalScale: 0.3 });
+upgrade('skin', { sheen: 0.4, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffc8b0) });   // 皮膚邊緣的柔光
+upgrade('hairBlack', { sheen: 0.8, sheenRoughness: 0.4, sheenColor: new THREE.Color(0x3a3734) }); // 髮絲光澤（偏冷灰，不要變咖啡色）
+upgrade('cottonWhite', { sheen: 0.6, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff) });
+upgrade('denimNavy', { sheen: 0.6, sheenRoughness: 0.7, sheenColor: new THREE.Color(0x4a5878), normalMap: TEX.weave, normalScale: 0.6 });
+upgrade('canvasKhaki', { sheen: 0.5, sheenRoughness: 0.8, sheenColor: sheenOf('canvasKhaki', 0.3), normalMap: TEX.weave, normalScale: 0.5 });
 

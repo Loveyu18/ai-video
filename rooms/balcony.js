@@ -572,16 +572,16 @@ export function build() {
   {
     const [ra, rb] = rodX;
     const z = (f) => rodZ0 + (rodZ1 - rodZ0) * f;
-    tshirt('clothes:tshirtWhite', ra, z(0.12), M.fabricWhite, 1, crng.jitter(0, 0.05));
-    tshirt('clothes:tshirtBeige', ra, z(0.2), M.fabricLinen, 0.95, crng.jitter(0, 0.05));
-    tshirt('clothes:tshirtTaupe', ra, z(0.28), M.fabricTaupe, 0.9, crng.jitter(0, 0.05));
-    towel('clothes:towelOat', ra, z(0.47), M.fabricOat, 0.4, 0.42, 0.34);
-    sockRing('clothes:sockRing', ra, z(0.84));
-    towel('clothes:towelWhite', rb, z(0.08), M.fabricWhite, 0.36, 0.4, 0.3);
-    tshirt('clothes:tshirtGrey', rb, z(0.3), M.fabricBoucle, 1, crng.jitter(0, 0.05));
-    pants('clothes:pants', rb, z(0.45), M.fabricGreyThrow);
-    tshirt('clothes:tshirtLinen', rb, z(0.58), M.fabricLinen, 1.05, crng.jitter(0, 0.05));
-    towel('clothes:handTowel', rb, z(0.8), M.fabricTaupe, 0.26, 0.3, 0.22);
+    // 衣物集中在晾衣桿北半段：鏡頭從東側門口看向西南女兒牆時，畫面中央保持淨空
+    tshirt('clothes:tshirtWhite', ra, z(0.04), M.fabricWhite, 1, crng.jitter(0, 0.05));
+    tshirt('clothes:tshirtBeige', ra, z(0.11), M.fabricLinen, 0.95, crng.jitter(0, 0.05));
+    tshirt('clothes:tshirtTaupe', ra, z(0.18), M.fabricTaupe, 0.9, crng.jitter(0, 0.05));
+    towel('clothes:towelOat', ra, z(0.32), M.fabricOat, 0.38, 0.4, 0.32);
+    towel('clothes:towelWhite', rb, z(0.08), M.fabricWhite, 0.32, 0.38, 0.28);
+    tshirt('clothes:tshirtGrey', rb, z(0.23), M.fabricBoucle, 1, crng.jitter(0, 0.05));
+    pants('clothes:pants', rb, z(0.31), M.fabricGreyThrow);
+    tshirt('clothes:tshirtLinen', rb, z(0.39), M.fabricLinen, 1.05, crng.jitter(0, 0.05));
+    sockRing('clothes:sockRing', rb, z(0.52));
   }
 
   // ═════════════════ 女兒牆內側：盆栽 ═════════════════
@@ -816,14 +816,14 @@ export function build() {
   }
   {
     const b = new Bucket();
-    const bz = Math.min(swing.z0 - 0.15, basket.z + 0.45);
+    // 掃把：本地 +x 指向牆面（x=0 為牆），頭在地上、柄靠牆
     const lean = 0.06;
-    // 掃把頭在地上、柄靠在右牆
-    b.add(M.woodAsh, new THREE.TubeGeometry(new THREE.LineCurve3(V3(X1 - 0.1, 0.12, bz), V3(X1 - 0.025, 1.25, bz - lean)), 2, 0.012, 10));
-    b.add(M.plasticBlack, xf(cyl(0.014, 0.014, 0.03, 10), [X1 - 0.025, 1.26, bz - lean], [0, 0, 0]));
-    b.add(M.plasticWhite, xf(rbox(0.05, 0.05, 0.26, 0.01), [X1 - 0.105, 0.12, bz], [0, 0, 0.065]));
-    b.add(M.fabricOat, xf(box(0.04, 0.1, 0.25), [X1 - 0.1, 0.05, bz], [0, 0, 0.12]));
-    root.add(b.build('broom'));
+    b.add(M.woodAsh, G.tube([[-0.1, 0.12, 0], [-0.025, 1.25, -lean]], 0.012, { segments: 2, radial: 10 }));
+    b.add(M.plasticBlack, xf(G.lathe([[0.014, 0], [0.014, 0.03], [0, 0.03]], 12), [-0.025, 1.245, -lean]));
+    b.add(M.plasticWhite, xf(rbox(0.05, 0.05, 0.26, 0.01), [-0.105, 0.12, 0], [0, 0, 0.065]));
+    b.add(M.fabricOat, xf(box(0.04, 0.1, 0.25), [-0.1, 0.05, 0], [0, 0, 0.12]));
+    // 南牆變實牆：靠在南牆、門掃掠區西側
+    at(b.build('broom'), swing.x0 - 0.2, 0, Z1, -PI / 2);
   }
   // 戶外壁燈（燈籠型）
   const lampPos = { y: 1.95, z: basket.z };
@@ -883,7 +883,7 @@ export function build() {
   // ═════════════════ 門邊拖鞋（門掃掠區外側） ═════════════════
   {
     const b = new Bucket();
-    const base = { x: swing.x0 - 0.16, z: Z1 - 0.18 };
+    const base = { x: swing.x0 - 0.15, z: swing.z0 + 0.12 }; // 門口內側、掃掠區外
     for (const [dx, dz, ry] of [[-0.055, 0, 0.12], [0.055, 0.02, -0.08]]) {
       const g = [];
       g.push([M.rubber, xf(rbox(0.1, 0.022, 0.26, 0.01), [0, 0.011, 0])]);

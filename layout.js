@@ -48,10 +48,11 @@ export const FOOTPRINT = [
 export const ROOMS = {
   entrance:   { name: '玄關',   rect: { x0: 7.5,  z0: 0,    x1: 9.8,  z1: 2.9  }, floor: 'whiteTile' },   // 實拍：亮面白色 60×60 磚
   living:     { name: '客廳',   rect: { x0: 6.75, z0: 2.9,  x1: 9.8,  z1: 8.55 }, floor: 'wood'  },
-  dining:     { name: '餐廳',   rect: { x0: 2.8,  z0: 2.9,  x1: 6.75, z1: 5.55 }, floor: 'wood'  },
+  dining:     { name: '餐廳',   rect: { x0: 2.8,  z0: 2.9,  x1: 6.75, z1: 4.25 }, floor: 'wood'  },
+  corridor:   { name: '臥室走道', rect: { x0: 2.8,  z0: 4.25, x1: 4.05, z1: 5.55 }, floor: 'wood'  }, // 通主臥門、小房拉門
   hall:       { name: '洗手台區', rect: { x0: 6.3,  z0: 1.3,  x1: 7.5,  z1: 2.9  }, floor: 'wood'  }, // 實拍：洗手台在濕區外
   masterBed:  { name: '主臥',   rect: { x0: 0,    z0: 5.55, x1: 4.05, z1: 8.55 }, floor: 'wood'  },
-  secondBed:  { name: '次臥',   rect: { x0: 4.05, z0: 5.55, x1: 6.75, z1: 8.55 }, floor: 'wood'  },
+  secondBed:  { name: '貓咪閱讀室', rect: { x0: 4.05, z0: 4.25, x1: 6.75, z1: 8.55 }, floor: 'wood'  }, // 依屋主標示：北側往餐廳凸出到 z 4.25
   smallRoom:  { name: '小房',   rect: { x0: 0,    z0: 2.9,  x1: 2.8,  z1: 5.55 }, floor: 'wood'  },
   kitchen:    { name: '廚房',   rect: { x0: 2.2,  z0: 0.55, x1: 4.85, z1: 2.9  }, floor: 'darkTile' },  // 實拍：深灰 60×60 磚
   bathroom:   { name: '廁所',   rect: { x0: 4.85, z0: 0.55, x1: 6.3,  z1: 2.9  }, floor: 'stoneTile' }, // 實拍：灰褐石紋磚
@@ -82,9 +83,10 @@ export const WALLS = {
   shaftBottom:   { from: [6.3, 1.3],   to: [7.5, 1.3],   type: INT },
   row1Bottom:    { from: [0, 2.9],     to: [6.3, 2.9],   type: INT }, // 陽台/廚房/廁所 的下牆
   smallRoomRight:{ from: [2.8, 2.9],   to: [2.8, 5.55],  type: INT }, // 小房｜餐廳（玻璃拉門）
-  row2Bottom:    { from: [0, 5.55],    to: [6.75, 5.55], type: INT }, // 小房/餐廳 與 臥室之間
-  bedsDivider:   { from: [4.05, 5.55], to: [4.05, 8.55], type: INT }, // 主臥｜次臥
-  secondLiving:  { from: [6.75, 5.55], to: [6.75, 8.55], type: INT }, // 次臥｜客廳
+  row2Bottom:    { from: [0, 5.55],    to: [4.05, 5.55], type: INT }, // 小房/走道 與 主臥之間
+  secondNorth:   { from: [4.05, 4.25], to: [6.75, 4.25], type: INT }, // 房間2 凸出段的北牆（面對餐廳）
+  bedsDivider:   { from: [4.05, 4.25], to: [4.05, 8.55], type: INT }, // 走道/主臥｜房間2
+  secondLiving:  { from: [6.75, 4.25], to: [6.75, 8.55], type: INT }, // 房間2｜客廳
 };
 
 // ═══════════════════════════════════════════════════════
@@ -98,10 +100,10 @@ export const DOORS = {
   front:     { name: '大門',     wall: 'extTopEntry',    from: 7.6,  to: 8.5,  kind: 'swing',   hinge: 7.6,  opensInto: 'entrance'  },
   kitchen:   { name: '廚房門',   wall: 'row1Bottom',     from: 3.1,  to: 3.85, kind: 'swing',   hinge: 3.85, opensInto: 'kitchen', openAngle: 140 }, // 開大貼牆，不擋影片鏡頭
   bathroom:  { name: '廁所門',   wall: 'bathShaft',      from: 1.95, to: 2.7,  kind: 'swing',   hinge: 2.7,  opensInto: 'bathroom'  }, // 實拍：門開在洗手台區那面
-  balcony:   { name: '陽台門',   wall: 'row1Bottom',     from: 1.4,  to: 2.15, kind: 'swing',   hinge: 2.15, opensInto: 'balcony'   },
+  balcony:   { name: '陽台門',   wall: 'balconyKitchen', from: 1.95, to: 2.75, kind: 'swing',   hinge: 2.75, opensInto: 'balcony', openAngle: 100 }, // 由廚房進出陽台，門片貼南牆
   smallRoom: { name: '小房玻璃拉門', wall: 'smallRoomRight', from: 3.3, to: 5.2, kind: 'sliding', panels: 2, glass: true },
   masterBed: { name: '主臥門',   wall: 'row2Bottom',     from: 3.1,  to: 3.9,  kind: 'swing',   hinge: 3.9,  opensInto: 'masterBed' },
-  secondBed: { name: '次臥門',   wall: 'row2Bottom',     from: 4.15, to: 4.95, kind: 'swing',   hinge: 4.15, opensInto: 'secondBed' },
+  secondBed: { name: '次臥門',   wall: 'secondNorth',    from: 4.15, to: 4.95, kind: 'swing',   hinge: 4.15, opensInto: 'secondBed' },
 };
 
 // ═══════════════════════════════════════════════════════
@@ -166,50 +168,71 @@ export const LIGHTING = {
 // 60 秒影片運鏡（camera.js 讀這裡）
 //   每個鏡頭：start~end 秒；pos / look 是路徑點 [x, y, z]（Catmull-Rom 平滑＋緩入緩出）
 //   ceilings:false 表示鳥瞰（拿掉天花與屋頂）
+//   narration：這個鏡頭的旁白（tools/voice.mjs 用台灣腔語音合成，鏡頭開始後 0.4 秒唸）
 //   鏡頭點都避開了家具與開著的門片；改家具後請用 ?t=秒數 預覽確認
 // ═══════════════════════════════════════════════════════
 export const VIDEO = {
   duration: 60, fps: 30, width: 1920, height: 1080, fade: 0.35,
   // 字卡（captions.js 畫在影片上）：片頭標題、每個鏡頭的 caption、片尾
+  voice: { name: 'zh-TW-HsiaoChenNeural', rate: '+0%', lead: 0.4 },   // 旁白語音：台灣口音女聲（曉臻）
   title: { start: 0.8, end: 6.2, main: 'WARM HOME', sub: '暖光住宅．室內設計 3D 導覽' },
   ending: { start: 57.9, end: 60, main: 'WARM HOME', sub: '全程式生成．無模型、無貼圖、無照片｜three.js' },
 };
 
 export const CAMERA_PATH = [
-  { name: '全屋鳥瞰', start: 0, end: 7, fov: 40, ceilings: false,
+  { name: '全屋鳥瞰', narration: '歡迎回家。三房兩廳，用溫暖的光，照亮每個角落。', start: 0, end: 7, fov: 40, ceilings: false,
     pos: [[15, 14, 12], [11, 12, 15], [6, 11, 15.5]],
     look: [[4.9, 0, 4.3], [4.9, 0, 4.5]] },
-  { name: '玄關進門', caption: ['01', '玄關', 'ENTRANCE'], start: 7, end: 13, fov: 68,
+  { name: '玄關進門', caption: ['01', '玄關', 'ENTRANCE'], narration: '一進門，整面木作鞋櫃，把雜亂都收起來。', start: 7, end: 13, fov: 68,
     pos: [[8.1, 1.55, 0.6], [8.2, 1.55, 2.2]],
     look: [[8.4, 1.2, 4.0], [8.0, 1.0, 7.5]] },
-  { name: '客廳往窗', caption: ['02', '客廳', 'LIVING ROOM'], start: 13, end: 21, fov: 68,
+  { name: '客廳往窗', caption: ['02', '客廳', 'LIVING ROOM'], narration: '客廳是奶茶色系，弧形沙發配上窗邊臥榻，午後的光從百葉窗灑進來。', start: 13, end: 21, fov: 68,
     pos: [[8.3, 1.5, 3.4], [8.2, 1.4, 4.6], [8.15, 1.35, 5.6]],
     look: [[8.2, 1.0, 8.5], [8.1, 0.9, 8.5]] },
-  { name: '客廳回望餐廳', caption: ['03', '餐廳', 'DINING'], start: 21, end: 27, fov: 68,
+  { name: '客廳回望餐廳', caption: ['03', '餐廳', 'DINING'], narration: '回頭看，大理石餐桌就在玄關旁，吃飯聊天剛剛好。', start: 21, end: 27, fov: 68,
     pos: [[7.6, 1.45, 8.0], [7.9, 1.5, 7.2]],
     look: [[8.6, 1.1, 2.5], [8.4, 1.1, 1.0]] },
-  { name: '廚房', caption: ['04', '廚房', 'KITCHEN'], start: 27, end: 32, fov: 72,
+  { name: '廚房', caption: ['04', '廚房', 'KITCHEN'], narration: '一字型廚房，黑玻璃背牆很好整理。', start: 27, end: 32, fov: 72,
     pos: [[3.55, 1.5, 3.4], [3.45, 1.45, 2.6]],
-    look: [[2.8, 1.0, 0.7], [2.7, 1.0, 0.7]] },
-  { name: '洗手台區', caption: ['05', '洗手台', 'VANITY'], start: 32, end: 38, fov: 68,
+    look: [[3.4, 1.0, 0.6], [3.3, 0.95, 0.6]] },
+  { name: '洗手台區', caption: ['05', '洗手台', 'VANITY'], narration: '洗手台在外面，乾濕分離，早上不用排隊。', start: 32, end: 38, fov: 68,
     pos: [[6.9, 1.5, 4.5], [6.9, 1.5, 3.3]],
     look: [[6.9, 1.1, 1.3], [6.4, 1.1, 1.4]] },
-  { name: '廁所', caption: ['06', '衛浴', 'BATHROOM'], start: 38, end: 42, fov: 72,
+  { name: '廁所', caption: ['06', '衛浴', 'BATHROOM'], narration: '淋浴間乾爽又明亮。', start: 38, end: 41.4, fov: 72,
     pos: [[6.45, 1.6, 2.25], [5.95, 1.6, 2.1]],
     look: [[4.95, 1.2, 1.0], [4.95, 1.1, 0.9]] },
-  { name: '主臥', caption: ['07', '主臥', 'MASTER BEDROOM'], start: 42, end: 48, fov: 72,
+  { name: '主臥', caption: ['07', '主臥', 'MASTER BEDROOM'], narration: '主臥有轉角大窗，白紗簾讓光線好柔和。', start: 41.4, end: 46.4, fov: 72,
     pos: [[3.3, 1.55, 5.85], [3.0, 1.5, 6.3]],
     look: [[1.5, 1.0, 8.0], [0.8, 1.0, 7.6]] },
-  { name: '小房', caption: ['08', '小房', 'STUDY'], start: 48, end: 52, fov: 72,
+  { name: '小房', caption: ['08', '小房', 'STUDY'], narration: '小房，書房客房都適合。', start: 46.4, end: 50.2, fov: 72,
     pos: [[3.1, 1.5, 4.95], [2.3, 1.5, 4.9]],
     look: [[0.5, 0.9, 3.7], [0.5, 0.9, 3.6]] },
-  { name: '次臥', caption: ['09', '次臥', 'BEDROOM'], start: 52, end: 55.5, fov: 72,
-    pos: [[4.7, 1.55, 5.85], [4.85, 1.5, 6.25]],
+  { name: '次臥', caption: ['09', '貓咪閱讀室', 'CAT READING ROOM'], narration: '這是貓咪閱讀室，人看書，貓咪散步。', start: 50.2, end: 55.5, fov: 72,
+    pos: [[4.6, 1.55, 4.55], [4.85, 1.5, 5.6]],
     look: [[5.6, 0.8, 8.0], [5.8, 0.8, 8.0]] },
-  { name: '陽台夕陽', caption: ['10', '陽台', 'BALCONY'], start: 55.5, end: 60, fov: 70,
-    pos: [[1.75, 1.5, 3.15], [1.3, 1.5, 2.2]],
-    look: [[0.3, 1.2, 1.2], [0.0, 1.3, 1.4]] },
+  { name: '陽台夕陽', caption: ['10', '陽台', 'BALCONY'], narration: '最後，到陽台看一場夕陽。', start: 55.5, end: 60, fov: 70,
+    pos: [[3.3, 1.5, 2.35], [2.2, 1.5, 2.3], [1.15, 1.5, 2.15]],
+    look: [[0.6, 1.25, 1.9], [0.0, 1.3, 1.6]] },
 ];
+
+// ═══════════════════════════════════════════════════════
+// 導覽員角色（guide.js 讀這裡）：依屋主照片做的風格化人物
+//   每個鏡頭可指定一個站位：pos 是腳下 [x, z]；身體自動轉向該鏡頭的攝影機，頭會跟著鏡頭轉
+//   gesture：'wave' 揮手、'present' 用手掌比向 target [x, y, z]
+//   站位用 tools/check-guide.mjs 檢查過不會撞到家具；廁所、陽台空間太小，不安排
+// ═══════════════════════════════════════════════════════
+export const GUIDE = {
+  spots: {
+    '玄關進門':     { pos: [7.8, 4.0],   gesture: 'wave' },
+    '客廳往窗':     { pos: [8.75, 6.6],  gesture: 'present', target: [7.4, 0.6, 7.0] },
+    '客廳回望餐廳': { pos: [7.7, 4.5],   gesture: 'present', target: [8.8, 0.8, 3.6] },
+    '廚房':         { pos: [4.4, 1.5],   gesture: 'present', target: [3.4, 1.0, 0.9] },
+    '洗手台區':     { pos: [7.2, 2.5],   gesture: 'present', target: [6.8, 0.9, 1.5] },
+    '主臥':         { pos: [2.9, 7.45],  gesture: 'present', target: [1.5, 1.0, 8.2] },
+    '小房':         { pos: [1.65, 3.7],  gesture: 'present', target: [0.6, 0.6, 4.0] },
+    '次臥':         { pos: [5.25, 6.9],  gesture: 'present', target: [4.2, 1.6, 6.2] },
+  },
+};
 
 // ═══════════════════════════════════════════════════════
 // 工具函式（其他程式透過這些取座標）

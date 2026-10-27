@@ -12,6 +12,7 @@
  *   ?render=1                  逐格輸出影片（由 tools/render.mjs 驅動，不要手動開）
  *   &ao=0                      關掉環境遮蔽（比較用）
  *   &nocap=1                   不顯示字卡（片頭標題、房間名稱、片尾）
+ *   ?cam=..&look=..&guideAt=17 自訂鏡頭＋擺出導覽員在第 17 秒的姿勢（近拍角色用）
  *   &pt=64                     搭配 render：用路徑追蹤，每格 64 次取樣（tools/render.mjs --pt=64）
  */
 import * as THREE from 'three';
@@ -24,6 +25,7 @@ import * as L from './layout.js';
 import { buildShell } from './shell.js';
 import { cameraAt, applyCamera } from './camera.js';
 import { drawCaptions } from './captions.js';
+import { createGuide } from './guide.js';
 
 export const AREAS = ['living', 'masterBed', 'secondBed', 'kitchen', 'bathroom', 'balcony', 'entrance', 'smallRoom', 'hall'];
 
@@ -46,6 +48,15 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 500);
 scene.add(buildShell());
 scene.environment = buildWarmEnvironment(renderer);
+
+// —— 導覽員角色（嘴型資料由 tools/voice.mjs 產生；沒有就閉嘴不動） ——
+const guide = createGuide();
+if (!params.has('noguide')) scene.add(guide.root);   // &noguide=1：不放導覽員（比較用）
+guide.root.visible = false;
+try {
+  const res = await fetch('./output/lipsync.json', { cache: 'no-store' });
+  if (res.ok) guide.setLipsync(await res.json());
+} catch { /* 沒有嘴型資料也能跑 */ }
 
 /**
  * 程式生成的暖色環境反射（不是貼圖）：一個暗暖色房間盒，加上幾片暖光面板，
@@ -153,6 +164,7 @@ if (params.has('render')) {
   for (let f = from; f < to; f++) {
     const state = cameraAt(f / fps);
     applyCamera(state, camera, ceilingObjects, renderer, 1, aerialObjects);
+    guide.update(f / fps, camera);
     if (tracer) {
       tracer.prepare(state.ceilings);
       tracer.render(ptSamples);
@@ -186,6 +198,7 @@ if (params.has('render')) {
     const t = params.has('play') ? (t0 + (performance.now() - start) / 1000) % L.VIDEO.duration : t0;
     const state = cameraAt(t);
     applyCamera(state, camera, ceilingObjects, renderer, 1, aerialObjects);
+    guide.update(t, camera);
     if (params.has('play')) document.title = `${t.toFixed(1)}s · ${state.shot}`;
     draw();
     const r = Math.min(devicePixelRatio, 2);
@@ -238,9 +251,12 @@ if (params.has('render')) {
     setRenderSize(innerWidth, innerHeight, Math.min(devicePixelRatio, 2));
   });
 
+  // ?guideAt=秒數：一般預覽時也擺出導覽員在那個時間點的姿勢（近拍角色用）
+  const guideAt = params.has('guideAt') ? Number(params.get('guideAt')) : null;
   let frames = 0;
   renderer.setAnimationLoop(() => {
     controls.update();
+    if (guideAt !== null) guide.update(guideAt, camera);
     draw();
     if (++frames === 3) finish();
   });

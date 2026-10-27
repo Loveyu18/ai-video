@@ -26,6 +26,7 @@ const TALL = { width: 0.45 };
 const SOFA = { depth: 0.8, bevel: 0.06, curve: 0.22, baseH: 0.3, seatH: 0.45, backH: 0.74, backW: 0.2 };
 const DINING = { len: 1.2, wid: 0.78, h: 0.75 };
 const WALKWAY = 0.9;
+const LIVING_DEPTH = 2.9;      // 起居區（沙發段）從南端往北的深度
 
 // ═══════════════════════════════════════════════════════
 // 小工具
@@ -596,15 +597,18 @@ export function build() {
   const R = L.roomInterior(ROOM);
   const win = L.WINDOWS.livingSouth;
 
-  // 西牆（次臥｜客廳）在客廳內那一段
+  // 西牆（房間2｜客廳）在客廳內那一段
   const sw = L.WALLS.secondLiving;
   const wz0 = Math.max(R.z0, Math.min(sw.from[1], sw.to[1]));
+  // 客廳起居區的北界：固定從南端 R.z1 往北 LIVING_DEPTH 起算（照片中沙發／展示龕的位置），
+  // 不依賴西牆北端（屋主修正後西牆往北延伸到餐區旁，起居區並沒有跟著變長）。
+  const zLiv = Math.max(wz0, R.z1 - LIVING_DEPTH);
 
   // —— 東牆系統 ——
   const wallZ1 = R.z1 - TALL.width;
   const nCols = Math.max(1, Math.round((wallZ1 - R.z0) / WALLSYS.colW));
   const colW = (wallZ1 - R.z0) / nCols;
-  const nicheMid = (wz0 + R.z1 - BENCH.depth) / 2;
+  const nicheMid = (zLiv + R.z1 - BENCH.depth) / 2;
   const nicheI0 = Math.min(nCols - NICHE.cols, Math.max(0, Math.round((nicheMid - R.z0) / colW - NICHE.cols / 2)));
   const benchZ0 = R.z0 + (nicheI0 - 1) * colW;
   const ws = buildWallSystem(rng.fork('wall'), R, R.z0, wallZ1, { i0: nicheI0 }, benchZ0);
@@ -614,14 +618,16 @@ export function build() {
 
   // —— 西牆：弧形沙發（南端接到臥榻前）、立燈＋靠牆畫在北端 ——
   const sofaZ1 = R.z1 - BENCH.depth - 0.04;
-  const sofaZ0 = wz0 + 0.62;
+  const sofaZ0 = zLiv + 0.62;
   const capN = SOFA.depth / 2 * 1.0 + SOFA.bevel, capS = SOFA.depth / 2 * 0.85 + SOFA.bevel;
   const halfLen = (sofaZ1 - sofaZ0 - capN - capS) / 2;
   const sofaZc = sofaZ0 + capN + halfLen;
   const sofa = buildSofa(rng.fork('sofa'), R.x0, sofaZc, halfLen);
   root.add(sofa.g);
-  root.add(buildLeaningArt(R.x0, wz0 + 0.33));
-  root.add(buildFloorLamp(R.x0 + 0.2, wz0 + 0.45));
+  root.add(buildLeaningArt(R.x0, zLiv + 0.33));
+  root.add(buildFloorLamp(R.x0 + 0.2, zLiv + 0.45));
+  // 西牆北段（餐區旁的白牆）：掛一幅直幅畫，平貼牆面，不佔走道
+  if (zLiv - wz0 > 0.8) root.add(buildWallArt(R.x0, (wz0 + zLiv) / 2, 1.5, 0.42, 0.56, 1, 'artDining'));
   root.add(buildWallArt(R.x0, sofaZc - halfLen * 0.45, 1.62, 0.5, 0.66, 0, 'artLarge'));
   root.add(buildWallArt(R.x0, sofaZc + halfLen * 0.35, 1.55, 0.36, 0.46, 1, 'artSmall'));
 

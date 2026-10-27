@@ -36,34 +36,44 @@ const GLASS_T = 0.006;        // 黑玻璃背牆厚
 
 // 由南往北的分段長度
 const SEG_STOVE = 0.8;
-const SEG_DRAWER = 0.4;
+const SEG_DRAWER = 0.62;          // 爐子與水槽之間的備料檯面
 const SEG_SINK = 0.75;
 
 export function build() {
   const rng = rngFor(ROOM);
   const root = new THREE.Group();
   root.name = `room:${ROOM}`;
+  let target = root;                    // 小工具預設加到哪個群組（廚具本地座標／世界座標）
 
   const I = L.roomInterior(ROOM);
   const H = L.CEILING_HEIGHT;
-  const X0 = I.x0, X1 = I.x1, Z0 = I.z0, Z1 = I.z1;
+  const WX0 = I.x0, WX1 = I.x1, WZ0 = I.z0, WZ1 = I.z1;
   const swing = L.doorSwingZone(ROOM);
-  const southDoors = L.openingsOfRoom(ROOM).filter((o) => o.side === 'z1');
+  const openings = L.openingsOfRoom(ROOM);
+  const doorHole = (o) => [o.from, o.to, o.sill ?? 0, o.head ?? L.DOOR_HEIGHT];
+  const southHoles = openings.filter((o) => o.side === 'z1').map(doorHole);
+  const westHoles = openings.filter((o) => o.side === 'x0').map(doorHole);
+  const eastHoles = openings.filter((o) => o.side === 'x1').map(doorHole);
+  if (openings.some((o) => o.side === 'z0')) throw new Error('kitchen: 北牆有開口，不能放廚具');
 
-  // 廚具沿西牆；北端讓出北牆磁磚厚度
-  const RZ0 = Z0 + TILE_T + 0.002;      // 廚具北端
-  const RZ1 = Z1;                       // 廚具南端（南牆在廚具後段不貼磚）
-  const FX = X0 + DEPTH;                // 下櫃門片外側
-  if (swing && FX + OVERHANG > swing.x0) throw new Error('kitchen: 廚具會撞到門的掃掠區');
+  // 一字型廚具靠北牆、由東往西整排。先在「本地座標」裡建：
+  //   本地 x＝離牆深度（0＝牆面）、本地 z＝沿牆長度（0＝東端）；
+  //   最後整組繞 y 轉 -90°：本地 x → 世界 +z、本地 z → 世界 -x（東→西）。
+  const LEN = WX1 - WX0;
+  const X0 = 0;
+  const RZ0 = TILE_T + 0.002;           // 東端（讓出東牆磁磚厚度）
+  const RZ1 = LEN - TILE_T - 0.002;     // 西端（讓出西牆磁磚厚度）
+  const FX = X0 + DEPTH;                // 下櫃門片外側（離北牆）
+  if (swing && WZ0 + FX + OVERHANG > swing.z0) throw new Error('kitchen: 廚具會撞到門的掃掠區');
 
-  // 分段（z 範圍，南→北）
+  // 分段（本地 z）：西端爐子 → 備料抽屜 → 水槽 → 東端空檯面
   const zStove = [RZ1 - SEG_STOVE, RZ1];
   const zDrawer = [zStove[0] - SEG_DRAWER, zStove[0]];
   const zSink = [zDrawer[0] - SEG_SINK, zDrawer[0]];
   const zNorth = [RZ0, zSink[0]];
 
   // ───────────────────── 小工具 ─────────────────────
-  const mesh = (geo, mat, name, parent = root, shadow = true) => {
+  const mesh = (geo, mat, name, parent = target, shadow = true) => {
     const m = new THREE.Mesh(geo, mat);
     m.name = `${ROOM}:${name}`;
     m.castShadow = shadow;
@@ -72,29 +82,29 @@ export function build() {
     return m;
   };
   /** 倒角方塊（預設 2mm 倒角）：依 [x0,x1]×[y0,y1]×[z0,z1] 擺放 */
-  const boxAt = (name, mat, x0, x1, y0, y1, z0, z1, parent = root, shadow = true, r = 0.002, seg = 1) => {
+  const boxAt = (name, mat, x0, x1, y0, y1, z0, z1, parent = target, shadow = true, r = 0.002, seg = 1) => {
     const m = mesh(G.roundedBox(x1 - x0, y1 - y0, z1 - z0, r, seg), mat, name, parent, shadow);
     m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
     return m;
   };
-  const cyl = (name, mat, rTop, rBot, h, x, y, z, seg = 24, parent = root) => {
+  const cyl = (name, mat, rTop, rBot, h, x, y, z, seg = 24, parent = target) => {
     const m = mesh(new THREE.CylinderGeometry(rTop, rBot, h, seg), mat, name, parent);
     m.position.set(x, y + h / 2, z);
     return m;
   };
-  const lathe = (name, mat, pts, x, y, z, seg = 28, parent = root) => {
+  const lathe = (name, mat, pts, x, y, z, seg = 28, parent = target) => {
     const m = mesh(G.lathe(pts, seg), mat, name, parent);
     m.position.set(x, y, z);
     return m;
   };
-  const group = (name, parent = root) => {
+  const group = (name, parent = target) => {
     const g = new THREE.Group();
     g.name = `${ROOM}:${name}`;
     parent.add(g);
     return g;
   };
   /** 管件（geo.tube）：points 為世界座標 */
-  const tubeAt = (name, mat, pts, r, parent = root, opts = {}) => mesh(G.tube(pts, r, opts), mat, name, parent);
+  const tubeAt = (name, mat, pts, r, parent = target, opts = {}) => mesh(G.tube(pts, r, opts), mat, name, parent);
   /** 圓弧取點（2D） */
   const arc = (cx, cy, r, a0, a1, n = 10) => Array.from({ length: n + 1 }, (_, i) => {
     const a = a0 + ((a1 - a0) * i) / n;
@@ -133,6 +143,12 @@ export function build() {
     m.position.set(xFront - t / 2, (y0 + y1) / 2, (a + b) / 2);
     return m;
   };
+
+  // ═════════════════════ 廚具群組（本地座標 → 北牆） ═════════════════════
+  const run = group('run');
+  run.rotation.y = -Math.PI / 2;
+  run.position.set(WX1, 0, WZ0);
+  target = run;
 
   // ═════════════════════ 下櫃（淺橡木、無把手細溝） ═════════════════════
   const base = group('baseCabinets');
@@ -366,6 +382,7 @@ export function build() {
   // 機身上方遮板（吊櫃底到抽油煙機頂之間的木作收邊）
   if (tipX > UX1) boxAt('hood:safety', M.paintCharcoal, UX1, Math.min(tipX, FX), WALL_CAB_BOTTOM - 0.001, WALL_CAB_BOTTOM, hz0, hz1, hood, false);
 
+  target = root;
   // ═════════════════════ 大理石紋大板磚（北、東、南牆） ═════════════════════
   const tiles = group('wallTiles');
   /**
@@ -381,6 +398,10 @@ export function build() {
       for (let u = u0; u < u1 - 0.001; u += TILE_W) {
         // 每塊磚依開口切成可貼的片段 [a, b, va, vb]
         let pieces = [[u, Math.min(u + TILE_W, u1), v, vTop]];
+        // 門洞左右邊線一路切到天花（門頂上方的磚與兩側分開，各區包圍盒才不會蓋到門）
+        for (const e of edges) {
+          pieces = pieces.flatMap(([a, b, pv0, pv1]) => (e > a + 0.01 && e < b - 0.01 ? [[a, e, pv0, pv1], [e, b, pv0, pv1]] : [[a, b, pv0, pv1]]));
+        }
         for (const [h0, h1, hv0, hv1] of holes) {
           if (hv1 <= v || hv0 >= vTop) continue;
           pieces = pieces.flatMap(([a, b, pv0, pv1]) => {
@@ -439,14 +460,12 @@ export function build() {
       });
     }
   }
-  const wallsU0 = FX + OVERHANG + 0.002;    // 廚具前緣以東才貼（廚具後方看不到）
-  tileWall('north', 'x', Z0, 1, wallsU0, X1);
-  tileWall('east', 'z', X1, -1, Z0 + TILE_T, Z1 - TILE_T);
-  const holes = southDoors.map((o) => [o.from, o.to, o.sill ?? 0, o.head ?? L.DOOR_HEIGHT]);
-  tileWall('south', 'x', Z1, -1, wallsU0, X1, holes);
-  // 廚具上方吊櫃北端／南端側面已經靠牆，廚具前緣到磚面之間的北端側邊補一條收邊
-  boxAt('north:edgeTrim', M.groutLight, FX, wallsU0, 0, H, Z0, Z0 + TILE_T, tiles, false);
+  // 北牆是黑玻璃背牆＋廚具；西（含陽台門洞）、東、南牆貼大板磚
+  tileWall('west', 'z', WX0, 1, WZ0, WZ1 - TILE_T, westHoles);
+  tileWall('east', 'z', WX1, -1, WZ0, WZ1 - TILE_T, eastHoles);
+  tileWall('south', 'x', WZ1, -1, WX0, WX1, southHoles);
 
+  target = run;
   // ═════════════════════ 檯面擺飾 ═════════════════════
   const props = group('props');
   const top = CTR_TOP;
@@ -550,10 +569,14 @@ export function build() {
   }
   boxAt('driedFlowers:tie', M.fabricLinen, flX - 0.012, flX + 0.012, top + 0.003, top + 0.018, flZ - 0.075, flZ - 0.055, props, true, 0.004, 2);
 
-  // ═════════════════════ 東北角地上：吸塵器、掃把畚箕、紙箱 ═════════════════════
+  target = root;
+  // ═════════════════════ 東南角地上：吸塵器、掃把畚箕、紙箱 ═════════════════════
+  // 在「牆角本地座標」裡擺（原點＝牆角、本地 -x 往房內、本地 +z 往房內），
+  // 整組轉 -90° 放到東南角：靠東牆一字排開，紙箱靠南牆。不擋廚房門到陽台門的走道。
   const corner = group('cornerItems');
-  const nwZ = Z0 + TILE_T;      // 北牆磁磚面
-  const ewX = X1 - TILE_T;      // 東牆磁磚面
+  corner.rotation.y = -Math.PI / 2;
+  corner.position.set(WX1 - TILE_T, 0, WZ1 - TILE_T);
+  const nwZ = 0, ewX = 0;
   // 直立吸塵器（靠北牆，偏中）
   const vX = ewX - 0.6, vZ = nwZ + 0.12;
   {
@@ -626,12 +649,12 @@ export function build() {
   led.name = `${ROOM}:light:underCabinet`;
   led.position.set(X0 + 0.25, WALL_CAB_BOTTOM - 0.1, (zSink[0] + zDrawer[1]) / 2);
   led.castShadow = false;
-  root.add(led);
+  run.add(led);
   const hoodLight = new THREE.PointLight(L.LIGHT_COLORS.k3500, 1.0, 1.4, 2);
   hoodLight.name = `${ROOM}:light:hood`;
   hoodLight.position.set(X0 + 0.25, hb - 0.08, (hz0 + hz1) / 2);
   hoodLight.castShadow = false;
-  root.add(hoodLight);
+  run.add(hoodLight);
 
   return root;
 }

@@ -342,6 +342,25 @@ function buildChair(cx, cz, rotY, rng) {
 // ═══════════════════════════════════════════════════════
 // 東北角高櫃（淺橡木，下門板、中段開放層格、上門板），面向 +z
 // ═══════════════════════════════════════════════════════
+/** 北牆衣櫃：頂天、兩扇淺橡木門（長條把手）、退縮踢腳，面向 +z */
+function buildWardrobe(I, x0, x1, z1) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:wardrobe`;
+  const z0 = I.z0, H = L.CEILING_HEIGHT - 0.005, t = 0.018, kick = 0.07;
+  g.add(boxMinMax(x0 + 0.02, x1 - 0.02, 0, kick, z0, z1 - 0.04, M.paintCream, 'wardrobe:kick'));
+  g.add(boxMinMax(x0, x1, kick, H, z0, z1 - 0.02, M.woodOakDark, 'wardrobe:carcass'));
+  const n = Math.max(2, Math.round((x1 - x0) / 0.45));
+  const w = (x1 - x0) / n;
+  for (let i = 0; i < n; i++) {
+    const a = x0 + i * w + 0.0035, b = x0 + (i + 1) * w - 0.0035;
+    g.add(boxMinMax(a, b, kick + 0.004, H - 0.004, z1 - 0.02, z1, M.woodOak, `wardrobe:door${i}`, 0.002));
+    const hx = i % 2 === 0 ? b - 0.035 : a + 0.035;
+    g.add(place(G.roundedBox(0.012, 0.4, 0.014, 0.004), M.woodOakDark, `wardrobe:pull${i}`, hx, 1.05, z1 + 0.007));
+  }
+  void t;
+  return g;
+}
+
 function buildTallCabinet(I, rng, x0, z1) {
   const g = new THREE.Group();
   g.name = `${ROOM}:tallCabinet`;
@@ -429,6 +448,12 @@ export function build() {
   const tallX0 = Math.max(balcony ? balcony.to + 0.04 : I.x1 - TALL.w, I.x1 - TALL.w);
   const tallZ1 = Math.min(I.z0 + TALL.d, slide ? slide.from : I.z0 + TALL.d);
   root.add(buildTallCabinet(I, rng, tallX0, tallZ1));
+
+  // 北牆已無陽台門：床頭到高櫃之間加一座頂天衣櫃（兩扇門），與高櫃同深
+  if (!balcony) {
+    const wx0 = bed.x1 + 0.08, wx1 = tallX0 - 0.004;
+    if (wx1 - wx0 > 0.5) root.add(buildWardrobe(I, wx0, wx1, tallZ1));
+  }
 
   // 踢腳板（避開陽台門與拉門）
   const bb = new THREE.Group();

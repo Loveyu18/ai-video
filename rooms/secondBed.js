@@ -1,12 +1,13 @@
 /**
- * rooms/secondBed.js — 次臥（書房兼客房，日式／北歐）
+ * rooms/secondBed.js — 次臥 → 溫暖極簡貓咪閱讀工作室
  *
- * 配置（全部由 layout.js 推出）：
- *   - 右上角（x1, z0）：小衣櫃，門朝 -x
- *   - 右牆（x1）：單人床，床頭靠南牆（矮床頭板，不擋窗）
- *   - 南窗下（z1，從 x0 起）：書桌＋椅子，桌上檯燈、筆電、書、筆筒、馬克杯
- *   - 左牆（x0）：門掃掠區之後放書架；書桌上方軟木板＋層板
- *   - 中央地毯＋坐墩；門與衣櫃之間放琴葉榕盆栽；床邊牆上掛畫與壁燈
+ * 從北邊門口往南看南窗：
+ *   - 東牆 x1：整排淺橡木系統書桌（抽屜、南端收納櫃）＋頂天吊櫃，櫃底暖光 LED
+ *     桌上：顯示器、小主機、鍵盤、滑鼠、皮革桌墊、筆筒、相框、擺飾；深灰辦公椅
+ *   - 南端靠窗：架高木地台（正面一排抽屜），上有弧形木框布面躺椅、條紋木邊几＋小植物
+ *   - 西牆 x0：貓跳台牆——浮空層板、吊橋、貓頭開口貓屋、兩根麻繩貓抓柱、兩隻貓
+ *   - 門的掃掠區淨空；門口到地台留走道
+ * 座標全部由 layout.js 推出。
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -16,15 +17,12 @@ import { rngFor } from '../rng.js';
 import * as G from '../geo.js';
 
 const ROOM = 'secondBed';
-// 書背減色：以米白、白、炭灰為主，只留一點藍灰（照片風格）
-const BOOK_MATS = [M.bookColors[4], M.paperWhite, M.bookColors[6], M.paintCream, M.bookColors[4], M.paperWhite, M.bookColors[1]];
 
-// ── 家具尺寸（公尺） ──────────────────────────────────
-const WARDROBE = { w: 0.82, d: 0.57, h: 2.05 };
-const BED = { w: 1.06, l: 1.95, mattressW: 0.98, mattressL: 1.88, headH: 0.86 };
-const DESK = { w: 1.32, d: 0.56, h: 0.75, top: 0.03 };
-const SHELF = { w: 0.9, d: 0.32, h: 1.8 };
-const CHAIR = { seatH: 0.45, w: 0.44, d: 0.42, backH: 0.82 };
+// ── 尺寸（公尺） ──────────────────────────────────────
+const DESK = { d: 0.6, h: 0.75, top: 0.04, drawerH: 0.14 };
+const UPPER = { d: 0.36, y0: 1.85 };
+const PLAT = { d: 1.2, h: 0.3 };
+const SHELF_T = 0.03;
 
 // ── 小工具 ────────────────────────────────────────────
 function mesh(geo, mat, name, { cast = true, receive = true } = {}) {
@@ -34,7 +32,7 @@ function mesh(geo, mat, name, { cast = true, receive = true } = {}) {
   m.receiveShadow = receive;
   return m;
 }
-/** 方塊：中心 (x,y,z)。一律倒角（預設 3mm，r 可加大）；極薄的片才用直角 */
+/** 倒角方塊（預設 3mm）；極薄片才用直角 */
 function box(w, h, d, mat, name, x, y, z, r = 0) {
   const geo = Math.min(w, h, d) < 0.008
     ? G.worldUV(new THREE.BoxGeometry(w, h, d))
@@ -43,622 +41,503 @@ function box(w, h, d, mat, name, x, y, z, r = 0) {
   m.position.set(x, y, z);
   return m;
 }
-/** 方塊：以 min/max 範圍給 */
 function boxMinMax(x0, x1, y0, y1, z0, z1, mat, name, r = 0) {
   return box(x1 - x0, y1 - y0, z1 - z0, mat, name, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, r);
 }
-function cyl(rTop, rBot, h, mat, name, x, y, z, seg = 20) {
-  const m = mesh(G.worldUV(new THREE.CylinderGeometry(rTop, rBot, h, seg)), mat, name);
-  m.position.set(x, y, z);
-  return m;
-}
-/** 依材質分桶合併幾何 */
-function addMerged(parent, buckets, mats, name) {
-  buckets.forEach((list, i) => {
-    if (!list.length) return;
-    parent.add(mesh(mergeGeometries(list), mats[i], `${name}:${i}`));
-  });
-}
-/** 由幾何建 mesh 並擺位 */
-function place(geo, mat, name, x, y, z, rot = [0, 0, 0]) {
-  const m = mesh(geo, mat, name);
+function place(geo, mat, name, x, y, z, rot = [0, 0, 0], opts) {
+  const m = mesh(geo, mat, name, opts);
   m.position.set(x, y, z);
   m.rotation.set(...rot);
   return m;
 }
-/**
- * 抱枕表面沿鼓面走的細線（格紋、圖騰）。lines：每條線是 [[nx, nz], ...]（-1~1 正規化座標）。
- * face：+1 畫在 +y 面、-1 畫在 -y 面。公式與 geo.cushion 的厚度分布一致。
- */
-function cushionLines(w, h, d, seam, lines, face, r = 0.0028) {
-  return mergeGeometries(lines.map((pts) => G.tube(pts.map(([nx, nz]) => {
-    const e = Math.max((1 - nx ** 4) * (1 - nz ** 4), 0);
-    const t = seam + (1 - seam) * Math.sqrt(e);
-    return [(nx * w) / 2, face * ((h / 2) * t + 0.004), (nz * d) / 2];
-  }), r, { segments: 28, radial: 5 })));
-}
-const lineAlong = (fixed, axis, n = 9, span = 0.82) =>
-  Array.from({ length: n }, (_, i) => {
-    const v = -span + (2 * span * i) / (n - 1);
-    return axis === 'x' ? [v, fixed] : [fixed, v];
-  });
-/** 毯子流蘇：沿 z 一排細管，從 (x, y) 往下 len */
-function fringeGeo(x, y, z0, z1, len, rng, step = 0.018) {
-  const list = [];
-  for (let z = z0; z < z1; z += step) {
-    const l = len + rng.range(-0.008, 0.008);
-    list.push(G.tube([[x, y, z], [x + rng.range(-0.006, 0.006), y - l * 0.5, z + rng.range(-0.004, 0.004)], [x + rng.range(-0.01, 0.01), y - l, z]], 0.0025, { segments: 6, radial: 4 }));
+/** 圓柱座標 UV（u 沿圓周、v 沿高度），斜放或細長車削件用 */
+function cylUV(geo, swap = false) {
+  const p = geo.attributes.position, uv = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    let u = (Math.atan2(x, z) * Math.max(Math.hypot(x, z), 0.01)) / G.UV_METERS, v = y / G.UV_METERS;
+    if (swap) [u, v] = [v, u];
+    uv[i * 2] = u; uv[i * 2 + 1] = v;
   }
-  return mergeGeometries(list);
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return geo;
 }
+const sphere = (r, ws = 20, hs = 14) => G.worldUV(new THREE.SphereGeometry(r, ws, hs));
 
 // ═══════════════════════════════════════════════════════
-// 書：沿 z 方向排成一列，書背朝 +x（靠左牆的書架／層板用）
+// 東牆：系統書桌＋吊櫃
 // ═══════════════════════════════════════════════════════
-function bookRowZ(rng, buckets, { xBack, y, z0, z1, maxH, minH = 0.17, depth = [0.14, 0.2] }) {
-  let z = z0;
-  while (z < z1 - 0.03) {
-    if (rng.chance(0.06)) { z += rng.range(0.02, 0.05); continue; }
-    const t = rng.range(0.018, 0.045);
-    if (z + t > z1) break;
-    const h = rng.range(minH, maxH);
-    const d = rng.range(depth[0], depth[1]);
-    const g = new THREE.BoxGeometry(d, h, t);
-    g.translate(xBack + d / 2, y + h / 2, z + t / 2);
-    G.worldUV(g);
-    buckets[rng.int(0, buckets.length - 1)].push(g);
-    z += t + 0.001;
-  }
-  return z;
-}
-/** 平放的書堆（封面＋內頁） */
-function bookStack(rng, parent, cx, y, cz, n, name, rotBase = 0) {
-  const g = new THREE.Group();
-  g.name = `${ROOM}:${name}`;
-  let yy = y;
-  for (let i = 0; i < n; i++) {
-    const w = rng.range(0.15, 0.24), d = rng.range(0.21, 0.29), t = rng.range(0.018, 0.035);
-    const b = new THREE.Group();
-    b.add(box(w, t, d, rng.pick(BOOK_MATS), `${name}:cover${i}`, 0, t / 2, 0));
-    b.add(box(w - 0.006, t - 0.006, d - 0.012, M.paperWhite, `${name}:pages${i}`, 0.004, t / 2, 0));
-    b.position.set(cx + rng.jitter(0, 0.01), yy, cz + rng.jitter(0, 0.01));
-    b.rotation.y = rotBase + rng.jitter(0, 0.12);
-    g.add(b);
-    yy += t;
-  }
-  parent.add(g);
-  return yy;
-}
-
-// ═══════════════════════════════════════════════════════
-// 衣櫃（右上角，門朝 -x）
-// ═══════════════════════════════════════════════════════
-function buildWardrobe(I) {
-  const g = new THREE.Group();
-  g.name = `${ROOM}:wardrobe`;
-  const x1 = I.x1, x0 = x1 - WARDROBE.d, z0 = I.z0, z1 = z0 + WARDROBE.w, H = WARDROBE.h;
-  const plinth = 0.08, t = 0.018;
-  g.add(boxMinMax(x0 + 0.04, x1, 0, plinth, z0 + 0.02, z1 - 0.02, M.paintCharcoal, 'wardrobe:plinth'));
-  g.add(boxMinMax(x0 + 0.02, x1, plinth, H, z0, z0 + t, M.paintWhite, 'wardrobe:side'));
-  g.add(boxMinMax(x0 + 0.02, x1, plinth, H, z1 - t, z1, M.paintWhite, 'wardrobe:side'));
-  g.add(boxMinMax(x0 + 0.02, x1, H - t, H, z0, z1, M.paintWhite, 'wardrobe:top'));
-  g.add(boxMinMax(x0 + 0.02, x1, plinth, plinth + t, z0, z1, M.paintWhite, 'wardrobe:bottom'));
-  // 兩扇門（中間細縫、門板有一道橫向溝槽）
-  const doorX0 = x0, doorX1 = x0 + 0.02, gap = 0.003;
-  const zm = (z0 + z1) / 2;
-  for (const [a, b, side] of [[z0 + gap, zm - gap / 2, 0], [zm + gap / 2, z1 - gap, 1]]) {
-    g.add(boxMinMax(doorX0, doorX1, plinth + gap, H - gap, a, b, M.woodOak, `wardrobe:door${side}`, 0.003));
-    g.add(boxMinMax(doorX0 - 0.001, doorX0 + 0.002, 1.62, 1.626, a + 0.02, b - 0.02, M.paintCream, `wardrobe:groove${side}`));
-    // 長條黃銅把手（靠中縫）
-    const hz = side === 0 ? b - 0.04 : a + 0.04;
-    g.add(box(0.012, 0.36, 0.012, M.metalBrass, `wardrobe:handle${side}`, doorX0 - 0.022, 1.05, hz));
-    for (const hy of [0.89, 1.21]) g.add(box(0.016, 0.008, 0.008, M.metalBrass, `wardrobe:handleFoot${side}`, doorX0 - 0.009, hy, hz));
-  }
-  // 櫃頂收納籃
-  g.add(boxMinMax(x0 + 0.1, x1 - 0.06, H, H + 0.24, z0 + 0.08, z0 + 0.46, M.fabricOat, 'wardrobe:basket', 0.03));
-  g.add(boxMinMax(x0 + 0.12, x1 - 0.08, H + 0.24, H + 0.27, z0 + 0.1, z0 + 0.44, M.fabricLinen, 'wardrobe:basketBlanket', 0.015));
-  g.add(boxMinMax(x0 + 0.08, x1 - 0.1, H, H + 0.16, z0 + 0.5, z1 - 0.06, M.paintCream, 'wardrobe:box', 0.01));
-  return { group: g, x0, z1 };
-}
-
-// ═══════════════════════════════════════════════════════
-// 單人床（靠右牆，床頭靠南牆）
-// ═══════════════════════════════════════════════════════
-function buildBed(I, rng, sill) {
-  const g = new THREE.Group();
-  g.name = `${ROOM}:bed`;
-  const x1 = I.x1, x0 = x1 - BED.w, z1 = I.z1, z0 = z1 - BED.l;
-  const cx = (x0 + x1) / 2;
-  const headT = 0.045;
-  const headH = Math.min(BED.headH, sill - 0.04); // 床頭板頂低於窗台，不擋窗
-  const fz0 = z0, fz1 = z1 - headT;              // 床架範圍
-
-  // 床頭板：外框＋直條格柵
-  g.add(boxMinMax(x0, x0 + 0.045, 0, headH, z1 - headT, z1, M.woodOak, 'bed:headPost'));
-  g.add(boxMinMax(x1 - 0.045, x1, 0, headH, z1 - headT, z1, M.woodOak, 'bed:headPost'));
-  g.add(boxMinMax(x0, x1, headH - 0.06, headH, z1 - headT, z1, M.woodOak, 'bed:headRail', 0.008));
-  g.add(boxMinMax(x0 + 0.045, x1 - 0.045, 0.48, 0.52, z1 - headT + 0.008, z1 - 0.008, M.woodOak, 'bed:headRailLow'));
-  const slats = 9;
-  const span = BED.w - 0.09;
-  for (let i = 0; i < slats; i++) {
-    const sx = x0 + 0.045 + (span / slats) * (i + 0.5);
-    g.add(boxMinMax(sx - 0.018, sx + 0.018, 0.52, headH - 0.06, z1 - headT + 0.012, z1 - 0.012, M.woodOak, 'bed:headSlat'));
-  }
-  // 床架側板＋床尾板
-  const railY0 = 0.14, railY1 = 0.32;
-  g.add(boxMinMax(x0, x0 + 0.035, railY0, railY1, fz0, fz1, M.woodOak, 'bed:railL', 0.006));
-  g.add(boxMinMax(x1 - 0.035, x1, railY0, railY1, fz0, fz1, M.woodOak, 'bed:railR', 0.006));
-  g.add(boxMinMax(x0, x1, railY0, railY1 + 0.04, fz0, fz0 + 0.04, M.woodOak, 'bed:foot', 0.008));
-  // 床腳（微錐形）
-  for (const lx of [x0 + 0.045, x1 - 0.045]) {
-    for (const lz of [fz0 + 0.045, fz1 - 0.06]) g.add(cyl(0.024, 0.018, railY0, M.woodOak, 'bed:leg', lx, railY0 / 2, lz, 14));
-  }
-  // 床板
-  g.add(boxMinMax(x0 + 0.035, x1 - 0.035, railY1 - 0.04, railY1 - 0.02, fz0 + 0.04, fz1, M.paintCream, 'bed:deck'));
-
-  // 床墊（微鼓頂面、圓潤邊）
-  const mY0 = railY1 - 0.02, mH = 0.2, mY1 = mY0 + mH;
-  const mz0 = fz0 + 0.04 + (fz1 - fz0 - 0.04 - BED.mattressL) / 2;
-  const mz1 = mz0 + BED.mattressL;
-  const mcz = (mz0 + mz1) / 2;
-  g.add(place(G.mattress(BED.mattressW, mH, BED.mattressL, { radius: 0.05, crown: 0.012 }), M.fabricWhite, 'bed:mattress', cx, mY0 + mH / 2, mcz));
-  const top = mY1 + 0.01; // 床墊頂（含鼓起）
-
-  // 被子：蓋住床尾 2/3，往走道側（x0）與床尾自然垂下
-  const duvetZ1 = mz1 - 0.6;
-  const dLen = duvetZ1 - mz0;
-  const duvet = G.drapeOver({
-    w: BED.mattressW, d: dLen, thickness: 0.035, wrinkle: 0.014, edgeRadius: 0.05,
-    overhang: { x0: 0.26, x1: 0.02, z0: 0.16, z1: 0 }, rng: rng.fork('duvet'),
-  });
-  g.add(place(duvet, M.fabricBoucle, 'bed:duvet', cx, top + 0.035, (mz0 + duvetZ1) / 2));
-  // 被套反摺（白）
-  g.add(place(G.mattress(BED.mattressW + 0.03, 0.035, 0.24, { radius: 0.015, crown: 0.006 }), M.fabricWhite, 'bed:duvetFold', cx - 0.005, top + 0.045, duvetZ1 - 0.1));
-
-  // 深灰針織毯：鋪在床尾、往走道側垂下，末端流蘇
-  const tw = BED.mattressW - 0.06, tl = 0.72, hang = 0.3, tTop = top + 0.035 + 0.014;
-  const throwG = new THREE.Group();
-  throwG.name = `${ROOM}:bed:throwSet`;
-  throwG.add(place(G.drapeOver({
-    w: tw, d: tl, thickness: 0.012, wrinkle: 0.016, edgeRadius: 0.045,
-    overhang: { x0: hang, x1: 0, z0: 0, z1: 0 }, rng: rng.fork('throw'),
-  }), M.fabricGreyThrow, 'bed:throw', 0, 0, 0));
-  const arc = (Math.PI / 2) * 0.045, down = hang - arc;
-  const fx = -(tw / 2 + 0.045 + (down * 0.04) / Math.max(0.2, down + 0.2)) - 0.003;
-  throwG.add(mesh(fringeGeo(fx, -0.045 - down + 0.004, -tl / 2 + 0.01, tl / 2 - 0.01, 0.065, rng.fork('fringe')), M.fabricGreyThrow, 'bed:throwFringe'));
-  throwG.position.set(cx + 0.03, tTop, mz0 + 0.12 + tl / 2);
-  throwG.rotation.y = 0.06;
-  g.add(throwG);
-
-  // 枕頭（平放）＋兩個抱枕（立起靠床頭、互相倚靠）
-  const pillowZ = mz1 - 0.25;
-  g.add(place(G.cushion(0.66, 0.15, 0.42, { seam: 0.22, wrinkle: 0.004, rng: rng.fork('pillow') }), M.fabricWhite, 'bed:pillow', cx, top + 0.06, pillowZ, [0.1, 0, 0]));
-  const lean = (a) => -Math.PI / 2 + a; // 往床頭（+z）後仰 a
-  // 粉色（後）
-  g.add(place(G.cushion(0.42, 0.13, 0.42, { seam: 0.18, wrinkle: 0.005, rng: rng.fork('pink') }), M.fabricBlush, 'bed:cushionPink',
-    cx + 0.15, top + 0.25, pillowZ - 0.02, [lean(0.32), rng.jitter(-0.12, 0.04), rng.jitter(0.05, 0.03)]));
-  // 格紋（前，斜靠在粉色上）
-  const plaid = new THREE.Group();
-  plaid.name = `${ROOM}:bed:cushionPlaid`;
-  const pw = 0.38, ph = 0.12, seam = 0.18;
-  plaid.add(mesh(G.cushion(pw, ph, pw, { seam, wrinkle: 0.004, rng: rng.fork('plaid') }), M.fabricWhite, 'bed:cushionPlaid:base'));
-  const ks = [-0.55, -0.2, 0.2, 0.55];
-  plaid.add(mesh(cushionLines(pw, ph, pw, seam, [...ks.map((k) => lineAlong(k, 'z')), ...ks.map((k) => lineAlong(k, 'x'))], 1), M.fabricCharcoal, 'bed:cushionPlaid:lines'));
-  plaid.position.set(cx - 0.15, top + 0.21, pillowZ - 0.14);
-  plaid.rotation.set(lean(0.42), 0.2, -0.12);
-  g.add(plaid);
-  return { group: g, x0, z0 };
-}
-
-// ═══════════════════════════════════════════════════════
-// 書桌（南窗下，從左牆起）＋桌上物件
-// ═══════════════════════════════════════════════════════
-function buildDesk(I, rng, maxX1, win) {
+function buildDesk(I, platZ0, deskZ0) {
   const g = new THREE.Group();
   g.name = `${ROOM}:desk`;
-  const x0 = I.x0 + 0.01, x1 = Math.min(x0 + DESK.w, maxX1), z1 = I.z1 - 0.005, z0 = z1 - DESK.d;
-  const topY = DESK.h, cx = (x0 + x1) / 2;
-  g.add(boxMinMax(x0, x1, topY - DESK.top, topY, z0, z1, M.paintCream, 'desk:top', 0.006));
-  // 裙板＋抽屜
-  g.add(boxMinMax(x0 + 0.04, x1 - 0.04, topY - 0.11, topY - DESK.top, z0 + 0.04, z0 + 0.06, M.woodOak, 'desk:apronFront'));
-  g.add(boxMinMax(x0 + 0.04, x1 - 0.04, topY - 0.11, topY - DESK.top, z1 - 0.06, z1 - 0.04, M.woodOak, 'desk:apronBack'));
-  g.add(boxMinMax(x0 + 0.04, x0 + 0.06, topY - 0.11, topY - DESK.top, z0 + 0.06, z1 - 0.06, M.woodOak, 'desk:apronL'));
-  g.add(boxMinMax(x1 - 0.06, x1 - 0.04, topY - 0.11, topY - DESK.top, z0 + 0.06, z1 - 0.06, M.woodOak, 'desk:apronR'));
-  g.add(boxMinMax(cx - 0.25, cx + 0.25, topY - 0.105, topY - DESK.top - 0.005, z0 + 0.035, z0 + 0.055, M.paintCream, 'desk:drawer', 0.003));
-  g.add(box(0.1, 0.012, 0.014, M.metalBrass, 'desk:drawerPull', cx, topY - 0.07, z0 + 0.028));
-  // 錐形桌腳（略外斜）
-  const legH = topY - DESK.top;
-  for (const [lx, sx] of [[x0 + 0.05, -1], [x1 - 0.05, 1]]) {
-    for (const [lz, sz] of [[z0 + 0.05, -1], [z1 - 0.05, 1]]) {
-      const leg = cyl(0.022, 0.015, legH, M.woodOak, 'desk:leg', lx + sx * 0.008, legH / 2, lz + sz * 0.008, 14);
-      leg.rotation.set(sz * 0.03, 0, -sx * 0.03);
-      g.add(leg);
+  const x1 = I.x1, x0 = x1 - DESK.d, z0 = deskZ0, z1 = I.z1, top = DESK.h;
+  const ty0 = top - DESK.top;
+  g.add(boxMinMax(x0, x1, ty0, top, z0, z1, M.woodOak, 'desk:top', 0.005));
+  // 北端側板
+  g.add(boxMinMax(x0 + 0.01, x1, 0, ty0, z0, z0 + 0.025, M.woodOak, 'desk:endPanel'));
+  // 抽屜帶（北段，桌面下）：櫃體＋分割抽屜面板＋底部指扣陰影
+  const dy0 = ty0 - DESK.drawerH;
+  const dz0 = z0 + 0.025, dz1 = platZ0;
+  g.add(boxMinMax(x0 + 0.02, x1, dy0, ty0, dz0, dz1, M.woodOak, 'desk:drawerBox'));
+  const nD = Math.max(2, Math.round((dz1 - dz0) / 0.55));
+  const dw = (dz1 - dz0) / nD;
+  for (let i = 0; i < nD; i++) {
+    const a = dz0 + i * dw + 0.003, b = dz0 + (i + 1) * dw - 0.003;
+    g.add(boxMinMax(x0, x0 + 0.02, dy0 + 0.004, ty0 - 0.004, a, b, M.woodOak, `desk:drawer${i}`, 0.003));
+    g.add(boxMinMax(x0 - 0.001, x0 + 0.004, dy0 + 0.004, dy0 + 0.014, a + 0.05, b - 0.05, M.woodOakDark, `desk:drawerPull${i}`));
+  }
+  // 南段（地台旁）：落地收納櫃，兩扇門
+  g.add(boxMinMax(x0 + 0.04, x1, 0, 0.06, platZ0 + 0.01, z1, M.paintCream, 'desk:baseKick'));
+  g.add(boxMinMax(x0 + 0.02, x1, 0.06, ty0, platZ0, z1, M.woodOak, 'desk:baseCarcass'));
+  const cw = (z1 - platZ0) / 2;
+  for (let i = 0; i < 2; i++) {
+    const a = platZ0 + i * cw + 0.003, b = platZ0 + (i + 1) * cw - 0.003;
+    g.add(boxMinMax(x0, x0 + 0.02, 0.064, ty0 - 0.004, a, b, M.woodOak, `desk:baseDoor${i}`, 0.003));
+    const hz = i === 0 ? b - 0.04 : a + 0.04;
+    g.add(boxMinMax(x0 - 0.001, x0 + 0.004, ty0 - 0.2, ty0 - 0.04, hz - 0.006, hz + 0.006, M.woodOakDark, `desk:baseDoorPull${i}`));
+  }
+
+  // 吊櫃（頂到天花）＋門縫陰影＋LED 燈條
+  const ux0 = x1 - UPPER.d, uy0 = UPPER.y0, uy1 = L.CEILING_HEIGHT - 0.004;
+  g.add(boxMinMax(ux0 + 0.02, x1, uy0, uy1, z0, z1, M.woodOakDark, 'upper:carcass'));
+  const nU = Math.max(2, Math.round((z1 - z0) / 0.47));
+  const uw = (z1 - z0) / nU;
+  for (let i = 0; i < nU; i++) {
+    const a = z0 + i * uw + 0.0035, b = z0 + (i + 1) * uw - 0.0035;
+    g.add(boxMinMax(ux0, ux0 + 0.02, uy0, uy1 - 0.003, a, b, M.woodOak, `upper:door${i}`, 0.002));
+  }
+  g.add(boxMinMax(ux0 + 0.025, ux0 + 0.04, uy0 - 0.008, uy0, z0 + 0.02, z1 - 0.02, M.ledStrip, 'upper:led', 0.002));
+  return { group: g, x0, x1, z0, z1, top, ux0, uy0 };
+}
+
+/** 東牆北段頂天書櫃：下段雙門、上段開放層格（書背朝 -x），與書桌齊平靠牆 */
+function buildBookcase(I, z0, z1, rng) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:bookcase`;
+  const x1 = I.x1, x0 = x1 - 0.4, H = L.CEILING_HEIGHT - 0.004, t = 0.022, base = 0.75;
+  g.add(boxMinMax(x0 + 0.04, x1, 0, 0.06, z0 + t, z1 - t, M.paintCream, 'bookcase:kick'));
+  g.add(boxMinMax(x0, x1, 0, H, z0, z0 + t, M.woodOak, 'bookcase:side'));
+  g.add(boxMinMax(x0, x1, 0, H, z1 - t, z1, M.woodOak, 'bookcase:side'));
+  g.add(boxMinMax(x0, x1, H - t, H, z0 + t, z1 - t, M.woodOak, 'bookcase:top'));
+  g.add(boxMinMax(x1 - 0.012, x1, 0.06, H - t, z0 + t, z1 - t, M.woodOakDark, 'bookcase:back'));
+  // 下段雙門
+  const dw = (z1 - z0 - 2 * t) / 2;
+  for (let i = 0; i < 2; i++) {
+    const a = z0 + t + i * dw + 0.003, b = z0 + t + (i + 1) * dw - 0.003;
+    g.add(boxMinMax(x0, x0 + 0.02, 0.064, base - 0.004, a, b, M.woodOak, `bookcase:door${i}`, 0.003));
+    const hz = i === 0 ? b - 0.035 : a + 0.035;
+    g.add(boxMinMax(x0 - 0.001, x0 + 0.004, base - 0.2, base - 0.05, hz - 0.006, hz + 0.006, M.woodOakDark, `bookcase:pull${i}`));
+  }
+  // 層板
+  const levels = [base, base + 0.38, base + 0.74, base + 1.1, base + 1.48];
+  for (const y of levels) g.add(boxMinMax(x0 + 0.005, x1 - 0.012, y, y + t, z0 + t, z1 - t, M.woodOak, 'bookcase:shelf'));
+  // 書（書背朝 -x）＋擺飾
+  const mats = [M.paperWhite, M.bookColors[4], M.panelGreige, M.bookColors[6], M.paintCream];
+  const buckets = mats.map(() => []);
+  const zi0 = z0 + t + 0.012, zi1 = z1 - t - 0.012;
+  const row = (y, za, zb, minH, maxH) => {
+    let z = za;
+    while (z < zb - 0.02) {
+      const th = rng.range(0.018, 0.04), h = rng.range(minH, maxH), d = rng.range(0.17, 0.24);
+      if (z + th > zb) break;
+      const bg = new THREE.BoxGeometry(d, h, th);
+      bg.translate(x1 - 0.015 - d / 2, y + h / 2, z + th / 2);
+      buckets[rng.int(0, mats.length - 1)].push(G.worldUV(bg));
+      z += th + 0.0015;
+    }
+  };
+  row(levels[0] + t, zi0, zi1, 0.24, 0.31);
+  row(levels[1] + t, zi0, zi0 + (zi1 - zi0) * 0.55, 0.2, 0.28);
+  row(levels[2] + t, zi0 + (zi1 - zi0) * 0.45, zi1, 0.2, 0.27);
+  row(levels[3] + t, zi0, zi0 + (zi1 - zi0) * 0.4, 0.2, 0.26);
+  buckets.forEach((list, i) => list.length && g.add(mesh(mergeGeometries(list), mats[i], `bookcase:books${i}`)));
+  // 擺飾：陶瓶、藤籃、相框、小貓擺件（黑）
+  const midX = x1 - 0.2;
+  g.add(place(G.lathe([[0, 0], [0.05, 0], [0.065, 0.07], [0.05, 0.15], [0.025, 0.2], [0.028, 0.22], [0, 0.215]], 40), M.ceramicMatte, 'bookcase:vase', midX, levels[1] + t, zi1 - 0.1));
+  g.add(boxMinMax(x1 - 0.33, x1 - 0.03, levels[2] + t, levels[2] + t + 0.2, zi0 + 0.02, zi0 + 0.3, M.rattan, 'bookcase:basket', 0.02));
+  const fr = new THREE.Group();
+  fr.name = `${ROOM}:bookcase:photo`;
+  fr.add(mesh(G.roundedBox(0.012, 0.22, 0.17, 0.003), M.woodOak, 'bookcase:photoFrame'));
+  fr.add(boxMinMax(-0.0075, -0.006, -0.085, 0.085, -0.065, 0.065, M.panelGreige, 'bookcase:photoArt', 0));
+  fr.position.set(x1 - 0.08, levels[3] + t + 0.11, zi1 - 0.12);
+  fr.rotation.z = 0.1;
+  g.add(fr);
+  g.add(place(G.lathe([[0, 0], [0.06, 0], [0.065, 0.02], [0.045, 0.06], [0, 0.065]], 32), M.paintCharcoal, 'bookcase:bowl', midX, levels[4] + t, (zi0 + zi1) / 2));
+  return g;
+}
+
+/** 桌上物件（面向 -x，坐在桌前的人） */
+function buildDeskItems(desk, rng, platZ0) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:deskItems`;
+  const { x0, x1, z0, top } = desk;
+  const wsZ = (z0 + platZ0) / 2;      // 工作區中心（抽屜段中央）
+  // 皮革桌墊
+  g.add(place(G.extrudeRounded(G.roundedRectShape(0.4, 0.88, 0.025), 0.004, 0.0015), M.leatherCognac, 'deskMat', x0 + 0.27, top, wsZ));
+  // 顯示器：底座＋支架＋機身＋螢幕
+  const mx = x1 - 0.16;
+  g.add(place(G.extrudeRounded(G.roundedRectShape(0.19, 0.22, 0.03), 0.008, 0.002), M.metalAluminium, 'monitor:foot', mx, top, wsZ));
+  g.add(place(G.roundedBox(0.018, 0.3, 0.065, 0.006), M.metalAluminium, 'monitor:neck', mx + 0.03, top + 0.15, wsZ, [0, 0, 0.12]));
+  const sw = 0.62, sh = 0.36, sy = top + 0.13 + sh / 2, sx = mx - 0.01;
+  g.add(place(G.roundedBox(0.025, sh, sw, 0.006), M.metalAluminium, 'monitor:body', sx, sy, wsZ));
+  g.add(boxMinMax(sx - 0.0135, sx - 0.0125, sy - sh / 2 + 0.012, sy + sh / 2 - 0.012, wsZ - sw / 2 + 0.012, wsZ + sw / 2 - 0.012, M.screenOn, 'monitor:screen', 0));
+  // 桌布：山的剪影（暖色夕照感）
+  const mountain = new THREE.Shape();
+  const W = sw - 0.03, H = sh - 0.03;
+  mountain.moveTo(-W / 2, -H / 2);
+  [[-0.24, -0.05], [-0.16, 0.03], [-0.1, -0.02], [-0.02, 0.09], [0.06, 0.0], [0.12, 0.04], [0.2, -0.06], [W / 2, -0.03]].forEach(([u, v]) => mountain.lineTo(u, v));
+  mountain.lineTo(W / 2, -H / 2);
+  mountain.lineTo(-W / 2, -H / 2);
+  g.add(place(G.worldUV(new THREE.ShapeGeometry(mountain)), M.paintCharcoal, 'monitor:wallpaper', sx - 0.0138, sy, wsZ, [0, -Math.PI / 2, 0], { cast: false }));
+  g.add(boxMinMax(sx - 0.0142, sx - 0.0139, sy - sh / 2 + 0.02, sy - sh / 2 + 0.032, wsZ - 0.12, wsZ + 0.12, M.plasticWhite, 'monitor:dock', 0));
+  // 小主機
+  g.add(place(G.roundedBox(0.19, 0.05, 0.19, 0.02), M.metalAluminium, 'miniPC', x1 - 0.17, top + 0.025, wsZ + sw / 2 + 0.16));
+  // 鍵盤（底板＋按鍵）
+  const kx = x0 + 0.25;
+  g.add(place(G.roundedBox(0.12, 0.012, 0.42, 0.005), M.plasticWhite, 'keyboard', kx, top + 0.01, wsZ - 0.03));
+  const keys = [];
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 15; c++) {
+      const kw = r === 4 && c >= 4 && c <= 9 ? 0 : 0.022;
+      if (!kw) continue;
+      const k = new THREE.BoxGeometry(0.018, 0.005, 0.022);
+      k.translate(kx - 0.044 + r * 0.022, top + 0.018, wsZ - 0.03 - 0.19 + c * 0.0265 + 0.01);
+      keys.push(k);
     }
   }
-
-  // ── 桌上物件 ──
-  const yTop = topY;
-  // 筆電（略斜放，螢幕開約 105°）
-  const lap = new THREE.Group();
-  lap.name = `${ROOM}:laptop`;
-  const lw = 0.31, ld = 0.215;
-  lap.add(boxMinMax(-lw / 2, lw / 2, 0, 0.012, -ld / 2, ld / 2, M.metalAluminium, 'laptop:base', 0.004));
-  lap.add(boxMinMax(-lw / 2 + 0.025, lw / 2 - 0.025, 0.012, 0.0135, -ld / 2 + 0.02, ld / 2 - 0.09, M.plasticBlack, 'laptop:keys'));
-  lap.add(boxMinMax(-0.05, 0.05, 0.012, 0.0128, ld / 2 - 0.075, ld / 2 - 0.02, M.plasticWhite, 'laptop:trackpad'));
-  const lid = new THREE.Group();
-  lid.position.set(0, 0.012, -ld / 2);
-  lid.rotation.x = -0.26;
-  lid.add(boxMinMax(-lw / 2, lw / 2, 0, ld, -0.006, 0, M.metalAluminium, 'laptop:lid', 0.003));
-  lid.add(boxMinMax(-lw / 2 + 0.01, lw / 2 - 0.01, 0.01, ld - 0.012, 0, 0.001, M.screenOn, 'laptop:screen'));
-  lap.add(lid);
-  // 筆電背對窗、面向坐的人（螢幕在 +z 端 → 翻轉）
-  lap.rotation.y = Math.PI + rng.jitter(0, 0.08);
-  lap.position.set(cx - 0.02, yTop, z0 + 0.27);
-  g.add(lap);
-
-  // 書堆＋筆筒（左側靠牆）
-  bookStack(rng, g, x0 + 0.17, yTop, z1 - 0.2, 3, 'deskBooks', 0.1);
-  const cupX = x0 + 0.1, cupZ = z0 + 0.14;
-  g.add(cyl(0.035, 0.035, 0.1, M.woodWalnut, 'penCup', cupX, yTop + 0.05, cupZ, 18));
-  g.add(cyl(0.031, 0.031, 0.002, M.plasticBlack, 'penCupInside', cupX, yTop + 0.098, cupZ, 18));
-  const penMats = [M.metalBlack, M.plasticWhite, M.metalBrass, M.fabricCharcoal, M.plasticWhite];
+  const space = new THREE.BoxGeometry(0.018, 0.005, 0.15);
+  space.translate(kx + 0.044, top + 0.018, wsZ - 0.03 - 0.19 + 6.5 * 0.0265 + 0.01);
+  keys.push(space);
+  g.add(mesh(G.worldUV(mergeGeometries(keys)), M.plasticWhite, 'keyboard:keys'));
+  // 滑鼠
+  g.add(place(G.cushion(0.1, 0.03, 0.06, { seam: 0.35 }), M.plasticWhite, 'mouse', kx + 0.01, top + 0.017, wsZ + 0.3));
+  // 筆筒＋筆
+  const cz = z0 + 0.14, cx = x0 + 0.12;
+  g.add(place(G.lathe([[0, 0], [0.038, 0], [0.04, 0.004], [0.04, 0.1], [0.036, 0.1], [0.036, 0.008], [0, 0.008]], 32), M.plasticBlack, 'penCup', cx, top, cz));
+  const pens = [];
   for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2 + rng.range(0, 0.6);
+    const a = (i / 5) * Math.PI * 2 + rng.range(0, 0.5);
     const len = rng.range(0.13, 0.16);
-    const pen = cyl(0.004, 0.004, len, penMats[i], 'pen', cupX + Math.cos(a) * 0.016, yTop + 0.015 + len / 2, cupZ + Math.sin(a) * 0.016, 8);
-    pen.rotation.set(Math.sin(a) * 0.18, 0, -Math.cos(a) * 0.18);
-    g.add(pen);
+    const bx = cx + Math.cos(a) * 0.015, bz = cz + Math.sin(a) * 0.015;
+    pens.push(G.tube([[bx, top + 0.01, bz], [bx + Math.cos(a) * 0.03, top + 0.01 + len, bz + Math.sin(a) * 0.03]], 0.004, { segments: 2, radial: 6 }));
   }
-  // 筆記本＋鉛筆
-  const nb = box(0.15, 0.008, 0.21, M.fabricOat, 'notebook', x0 + 0.36, yTop + 0.004, z0 + 0.16);
-  nb.rotation.y = rng.jitter(0.25, 0.1);
-  g.add(nb);
-  const pencil = cyl(0.0035, 0.0035, 0.17, M.woodOak, 'pencil', x0 + 0.38, yTop + 0.012, z0 + 0.14, 6);
-  pencil.rotation.set(0, 0, Math.PI / 2);
-  pencil.rotation.y = 0.5;
-  g.add(pencil);
-  // 馬克杯
-  const mugX = x1 - 0.36, mugZ = z0 + 0.13;
-  g.add(cyl(0.04, 0.036, 0.095, M.ceramicWhite, 'mug', mugX, yTop + 0.0475, mugZ, 20));
-  g.add(cyl(0.036, 0.036, 0.002, M.woodWalnut, 'mugCoffee', mugX, yTop + 0.085, mugZ, 20));
-  const handle = mesh(new THREE.TorusGeometry(0.026, 0.006, 8, 16, Math.PI), M.ceramicWhite, 'mugHandle');
-  handle.position.set(mugX + 0.038, yTop + 0.05, mugZ);
-  handle.rotation.z = -Math.PI / 2;
-  g.add(handle);
-  // 多肉小盆（窗邊，壓低高度不擋窗）
-  const sx = Math.min(x1 - 0.22, win.from + 0.55), sz = z1 - 0.12;
-  g.add(cyl(0.045, 0.035, 0.07, M.ceramicMatte, 'succulentPot', sx, yTop + 0.035, sz, 16));
-  g.add(cyl(0.04, 0.04, 0.005, M.soil, 'succulentSoil', sx, yTop + 0.066, sz, 16));
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2;
-    const leaf = mesh(new THREE.SphereGeometry(0.018, 8, 6), M.leafOlive, 'succulentLeaf');
-    leaf.scale.set(0.6, 1.4, 0.6);
-    leaf.position.set(sx + Math.cos(a) * 0.018, yTop + 0.085, sz + Math.sin(a) * 0.018);
-    leaf.rotation.set(Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6);
-    g.add(leaf);
+  g.add(mesh(mergeGeometries(pens), M.metalBlack, 'pens'));
+  // 擺飾區（主機往南）：相框、陶瓷蛋形擺飾、書堆、小貓擺件底座
+  const oz = wsZ + sw / 2 + 0.4;
+  const frame = new THREE.Group();
+  frame.name = `${ROOM}:photoFrame`;
+  frame.add(mesh(G.roundedBox(0.012, 0.25, 0.2, 0.003), M.paintWhite, 'photoFrame:frame'));
+  frame.add(boxMinMax(-0.0075, -0.006, -0.1, 0.1, -0.075, 0.075, M.paintCharcoal, 'photoFrame:art', 0));
+  frame.add(boxMinMax(-0.0078, -0.0076, -0.1, -0.02, -0.075, 0.075, M.panelGreige, 'photoFrame:art2', 0));
+  frame.position.set(x1 - 0.08, top + 0.125, oz);
+  frame.rotation.z = 0.12;
+  g.add(frame);
+  g.add(place(G.lathe([[0, 0], [0.028, 0.004], [0.036, 0.04], [0.032, 0.08], [0.018, 0.11], [0, 0.118]], 32), M.ceramicRust, 'eggOrnament', x0 + 0.2, top + 0.012, oz - 0.05));
+  g.add(place(G.lathe([[0, 0], [0.045, 0], [0.045, 0.012], [0, 0.012]], 24), M.paintCharcoal, 'eggTray', x0 + 0.2, top, oz - 0.05));
+  let yy = top;
+  for (let i = 0; i < 3; i++) {
+    const t = rng.range(0.018, 0.03);
+    g.add(place(G.roundedBox(0.22, t, 0.16, 0.002), [M.paperWhite, M.bookColors[4], M.panelGreige][i], `books${i}`, x1 - 0.2, yy + t / 2, oz + 0.25, [0, rng.jitter(0, 0.1), 0]));
+    yy += t;
   }
-
-  // 檯燈（桌子右端，靠床頭，兼床頭燈）：陶瓷燈座＋布燈罩
-  const lampX = x1 - 0.16, lampZ = z1 - 0.27; // 燈罩離百葉簾 ≥ 0.15m
-  g.add(place(G.lathe([[0, 0], [0.066, 0], [0.07, 0.006], [0.068, 0.016], [0.06, 0.02], [0, 0.02]], 40), M.woodWalnut, 'lamp:foot', lampX, yTop, lampZ));
-  g.add(place(G.lathe([[0, 0], [0.05, 0], [0.068, 0.025], [0.077, 0.07], [0.07, 0.13], [0.05, 0.19], [0.026, 0.225], [0.016, 0.24], [0.018, 0.25], [0, 0.252]], 48), M.ceramicMatte, 'lamp:body', lampX, yTop + 0.02, lampZ));
-  g.add(cyl(0.005, 0.005, 0.12, M.metalBrass, 'lamp:stem', lampX, yTop + 0.33, lampZ, 10));
-  // 布燈罩：有厚度的車削環（外→上緣→內→下緣）
-  const shadeH = 0.2;
-  g.add(place(G.lathe([[0.15, 0], [0.11, shadeH], [0.105, shadeH], [0.145, 0.002], [0.15, 0]], 48), M.lampShade, 'lamp:shade', lampX, yTop + 0.32, lampZ));
-  g.add(place(G.tube([[0.008, 0, 0], [0.105, 0, 0]], 0.0025, { segments: 2, radial: 5 }), M.metalBrass, 'lamp:spider', lampX, yTop + 0.32 + shadeH - 0.01, lampZ));
-  const bulb = mesh(new THREE.SphereGeometry(0.03, 16, 12), M.lampBulb, 'lamp:bulb', { cast: false });
-  bulb.position.set(lampX, yTop + 0.37, lampZ);
-  g.add(bulb);
-  return { group: g, x0, x1, z0, z1, lamp: [lampX, yTop + 0.36, lampZ] };
+  return g;
 }
 
 // ═══════════════════════════════════════════════════════
-// 椅子（溫莎風木椅，面向書桌）
+// 深灰辦公椅（黑腳），區域座標面向 +z
 // ═══════════════════════════════════════════════════════
-function buildChair(cx, cz, rotY) {
+function buildOfficeChair(rng) {
   const g = new THREE.Group();
   g.name = `${ROOM}:chair`;
-  const { seatH, w, d, backH } = CHAIR;
-  // 座板：圓角梯形（前寬後窄），倒角擠出
-  const st = 0.03;
-  const corners = [[-w / 2 + 0.03, -d / 2], [w / 2 - 0.03, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]];
-  const seatShape = [];
-  for (let i = 0; i < 4; i++) {
-    const [ax, az] = corners[i], [bx, bz] = corners[(i + 1) % 4], [px, pz] = corners[(i + 3) % 4];
-    const rr = 0.05;
-    const toP = [px - ax, pz - az], toB = [bx - ax, bz - az];
-    const nP = Math.hypot(...toP), nB = Math.hypot(...toB);
-    const s0 = [ax + (toP[0] / nP) * rr, az + (toP[1] / nP) * rr], s1 = [ax + (toB[0] / nB) * rr, az + (toB[1] / nB) * rr];
-    for (let k = 0; k <= 6; k++) {
-      const t = k / 6, u = 1 - t;
-      seatShape.push([u * u * s0[0] + 2 * u * t * ax + t * t * s1[0], u * u * s0[1] + 2 * u * t * az + t * t * s1[1]]);
-    }
+  // 五爪腳＋輪子
+  const arms = [], wheels = [];
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 + 0.3;
+    const c = Math.cos(a), s = Math.sin(a);
+    arms.push(G.tube([[c * 0.03, 0.09, s * 0.03], [c * 0.16, 0.085, s * 0.16], [c * 0.28, 0.065, s * 0.28]], 0.014, { segments: 10, radial: 8 }));
+    const wgeo = new THREE.SphereGeometry(0.028, 12, 8);
+    wgeo.scale(1, 1, 0.7);
+    wgeo.rotateY(-a);
+    wgeo.translate(c * 0.28, 0.028, s * 0.28);
+    wheels.push(wgeo);
   }
-  g.add(place(G.extrudeRounded(seatShape, st, 0.006), M.woodOak, 'chair:seat', 0, seatH - st, 0));
-  g.add(place(G.mattress(w - 0.08, 0.03, d - 0.09, { radius: 0.013, crown: 0.006 }), M.fabricLinen, 'chair:pad', 0, seatH + 0.013, 0.01));
-  // 椅腳：外斜錐形（lathe 後傾斜）
-  const legH = seatH - st;
-  const legs = [];
+  g.add(mesh(G.worldUV(mergeGeometries(arms)), M.metalBlack, 'chair:base'));
+  g.add(mesh(G.worldUV(mergeGeometries(wheels)), M.rubber, 'chair:wheels'));
+  g.add(place(G.lathe([[0, 0], [0.04, 0], [0.04, 0.03], [0.022, 0.05], [0.022, 0.25], [0.018, 0.25], [0.018, 0.36], [0, 0.36]], 24), M.metalBlack, 'chair:column', 0, 0.06, 0));
+  // 座椅：底殼＋軟墊
+  g.add(place(G.roundedBox(0.44, 0.03, 0.42, 0.012), M.metalBlack, 'chair:seatShell', 0, 0.43, 0));
+  g.add(place(G.mattress(0.48, 0.075, 0.47, { radius: 0.03, crown: 0.012 }), M.fabricCharcoal, 'chair:seat', 0, 0.485, 0.01));
+  // 椅背：彎曲靠背墊＋兩支黑框（從座底後方往上）
+  const lean = 0.14;
+  g.add(place(G.cushion(0.46, 0.07, 0.48, { seam: 0.45, wrinkle: 0.002, rng: rng.fork('back') }), M.fabricCharcoal, 'chair:back', 0, 0.83, -0.25, [-Math.PI / 2 - lean, 0, 0]));
+  const frames = [];
   for (const sx of [-1, 1]) {
+    frames.push(G.tube([[sx * 0.2, 0.43, -0.12], [sx * 0.235, 0.5, -0.24], [sx * 0.235, 0.75, -0.28], [sx * 0.225, 1.04, -0.31]], 0.011, { segments: 20, radial: 8 }));
+  }
+  g.add(mesh(G.worldUV(mergeGeometries(frames)), M.metalBlack, 'chair:backFrame'));
+  // 靠在椅背的米色毛圈抱枕
+  g.add(place(G.cushion(0.38, 0.11, 0.3, { seam: 0.2, wrinkle: 0.005, rng: rng.fork('cushion') }), M.fabricBoucle, 'chair:cushion', 0.02, 0.84, -0.17, [-Math.PI / 2 - 0.22, 0.08, 0.06]));
+  return g;
+}
+
+// ═══════════════════════════════════════════════════════
+// 南端架高木地台（正面一排抽屜）
+// ═══════════════════════════════════════════════════════
+function buildPlatform(I, x1) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:platform`;
+  const x0 = I.x0, z1 = I.z1, z0 = z1 - PLAT.d, H = PLAT.h, t = 0.025;
+  g.add(boxMinMax(x0, x1, H - t, H, z0 - 0.012, z1, M.woodOak, 'platform:top', 0.004));
+  g.add(boxMinMax(x0, x1, 0, H - t, z0 + 0.02, z1, M.woodOakDark, 'platform:carcass'));
+  const n = Math.max(3, Math.round((x1 - x0) / 0.5));
+  const w = (x1 - x0) / n;
+  for (let i = 0; i < n; i++) {
+    const a = x0 + i * w + 0.003, b = x0 + (i + 1) * w - 0.003;
+    g.add(boxMinMax(a, b, 0.012, H - t - 0.012, z0, z0 + 0.02, M.woodOak, `platform:drawer${i}`, 0.003));
+    g.add(boxMinMax(a + 0.06, b - 0.06, H - t - 0.012, H - t - 0.004, z0 + 0.005, z0 + 0.02, M.woodOakDark, `platform:drawerGrip${i}`));
+  }
+  return { group: g, x0, x1, z0, z1, top: H };
+}
+
+/** 弧形木框布面躺椅（區域座標：長度沿 +x，頭端在 +x，寬沿 z） */
+function buildChaise(rng) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:chaise`;
+  const L0 = 1.45, W = 0.58;
+  const curve = new THREE.CatmullRomCurve3([
+    [0, 0.3], [0.2, 0.37], [0.42, 0.31], [0.75, 0.27], [1.0, 0.33], [1.2, 0.55], [1.36, 0.78], [1.43, 0.86],
+  ].map(([x, y]) => new THREE.Vector3(x - L0 / 2, y, 0)), false, 'centripetal');
+  const pts = curve.getPoints(48);
+  // 曲線法向（往上那側）
+  const normals = pts.map((p, i) => {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    const tx = b.x - a.x, ty = b.y - a.y, l = Math.hypot(tx, ty);
+    return [-ty / l, tx / l];
+  });
+  const offsetShape = (off0, off1) => {
+    const up = pts.map((p, i) => new THREE.Vector2(p.x + normals[i][0] * off1, p.y + normals[i][1] * off1));
+    const dn = pts.map((p, i) => new THREE.Vector2(p.x + normals[i][0] * off0, p.y + normals[i][1] * off0)).reverse();
+    return new THREE.Shape([...up, ...dn]);
+  };
+  const extr = (shape, depth, bevel) => {
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: depth - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 4, curveSegments: 8 });
+    geo.translate(0, 0, -(depth - bevel * 2) / 2);
+    return G.worldUV(geo);
+  };
+  // 布面軟墊（厚 8cm、圓潤邊）
+  g.add(mesh(extr(offsetShape(-0.005, 0.07), W - 0.02, 0.028), M.fabricBoucle, 'chaise:pad'));
+  // 兩側弧形木框（在軟墊下方）
+  for (const s of [-1, 1]) {
+    const f = mesh(extr(offsetShape(-0.06, -0.005), 0.035, 0.008), M.woodOak, 'chaise:frame');
+    f.position.z = s * (W / 2 - 0.02);
+    g.add(f);
+  }
+  // 底部弧形雪橇腳＋橫撐
+  const sled = new THREE.CatmullRomCurve3([[-L0 / 2 + 0.12, 0.24], [-L0 / 2 + 0.2, 0.03], [0.1, 0.0], [L0 / 2 - 0.25, 0.03], [L0 / 2 - 0.2, 0.3]].map(([x, y]) => new THREE.Vector3(x, y, 0)));
+  const rails = [];
+  for (const s of [-1, 1]) {
+    const sp = sled.getPoints(24).map((p) => [p.x, p.y + 0.015, s * (W / 2 - 0.02)]);
+    rails.push(G.tube(sp, 0.016, { segments: 32, radial: 10 }));
+  }
+  for (const x of [-L0 / 2 + 0.18, 0.1, L0 / 2 - 0.22]) {
+    const p = sled.getPoints(60).reduce((best, q) => (Math.abs(q.x - x) < Math.abs(best.x - x) ? q : best));
+    rails.push(G.tube([[x, p.y + 0.02, -(W / 2 - 0.02)], [x, p.y + 0.02, W / 2 - 0.02]], 0.013, { segments: 2, radial: 10 }));
+  }
+  // 雪橇腳與上方木框之間的支撐（曲線下方 6cm 是木框底）
+  const frameY = (x) => {
+    const q = pts.reduce((best, pp) => (Math.abs(pp.x - x) < Math.abs(best.x - x) ? pp : best));
+    return q.y - 0.055;
+  };
+  const sledY = (x) => sled.getPoints(80).reduce((best, q) => (Math.abs(q.x - x) < Math.abs(best.x - x) ? q : best)).y + 0.015;
+  for (const x of [-0.05, 0.25, L0 / 2 - 0.21]) {
     for (const sz of [-1, 1]) {
-      const lg = G.lathe([[0, 0], [0.012, 0], [0.015, legH * 0.55], [0.017, legH], [0, legH]], 16);
-      lg.rotateX(-sz * 0.07);
-      lg.rotateZ(sx * 0.07);
-      lg.translate(sx * (w / 2 - 0.045) + sx * legH * 0.07, 0.0015, sz * (d / 2 - 0.05) + sz * legH * 0.07);
-      legs.push(lg);
+      rails.push(G.tube([[x, sledY(x), sz * (W / 2 - 0.02)], [x + 0.02, frameY(x + 0.02) + 0.01, sz * (W / 2 - 0.02)]], 0.014, { segments: 2, radial: 10 }));
     }
   }
-  g.add(mesh(mergeGeometries(legs), M.woodOak, 'chair:legs'));
-  // H 型橫撐
-  const sy = 0.16, lx = w / 2 - 0.045 + 0.06 * 0.07 * 4, lz = d / 2 - 0.05 + 0.06 * 0.07 * 4;
-  g.add(mesh(mergeGeometries([
-    G.tube([[-lx, sy, -lz], [-lx, sy, lz]], 0.009, { segments: 4, radial: 10 }),
-    G.tube([[lx, sy, -lz], [lx, sy, lz]], 0.009, { segments: 4, radial: 10 }),
-    G.tube([[-lx, sy, 0], [lx, sy, 0]], 0.008, { segments: 4, radial: 10 }),
-  ]), M.woodOak, 'chair:stretchers'));
-  // 椅背：弓形頂板＋兩支後柱＋直條（全部 tube）
-  const bz = -d / 2 + 0.035;
-  const railAt = (t) => [t * 0.21, backH - 0.015 + 0.012 * (1 - t * t), bz - 0.06 - 0.045 * (1 - t * t)];
-  const railPts = Array.from({ length: 9 }, (_, i) => railAt(-1.12 + (2.24 * i) / 8));
-  g.add(mesh(G.tube(railPts, 0.016, { segments: 40, radial: 12 }), M.woodOak, 'chair:topRail'));
-  for (const e of [railPts[0], railPts[railPts.length - 1]]) g.add(place(new THREE.SphereGeometry(0.016, 12, 8), M.woodOak, 'chair:railEnd', ...e));
-  const spindles = [];
-  for (const t of [-1, -0.5, 0, 0.5, 1]) {
-    const [rx, ry, rz] = railAt(t);
-    const base = [t * 0.17, seatH - 0.004, bz + 0.005];
-    const r = Math.abs(t) === 1 ? 0.012 : 0.0075; // 兩端較粗當後柱
-    spindles.push(G.tube([base, [(base[0] + rx) / 2, (base[1] + ry) / 2, (base[2] + rz) / 2 - 0.004], [rx, ry - 0.005, rz]], r, { segments: 12, radial: 8 }));
-  }
-  g.add(mesh(mergeGeometries(spindles), M.woodOak, 'chair:spindles'));
-  g.position.set(cx, 0, cz);
-  g.rotation.y = rotY;
+  g.add(mesh(G.worldUV(mergeGeometries(rails)), M.woodOak, 'chaise:sled'));
+  // 頭枕
+  const hp = curve.getPoint(0.86);
+  g.add(place(G.cushion(0.36, 0.1, 0.24, { seam: 0.25, wrinkle: 0.004, rng: rng.fork('headPillow') }), M.fabricBoucle, 'chaise:pillow', hp.x - 0.06, hp.y + 0.12, 0, [0, Math.PI / 2, 0.95]));
   return g;
 }
 
-// ═══════════════════════════════════════════════════════
-// 書架（靠左牆，門掃掠區之後）
-// ═══════════════════════════════════════════════════════
-function buildBookshelf(I, rng, z0) {
+/** 條紋木邊几（縱向凹槽的車削圓柱）＋小植物 */
+function buildSideTable(rng) {
   const g = new THREE.Group();
-  g.name = `${ROOM}:bookshelf`;
-  const x0 = I.x0 + 0.005, x1 = x0 + SHELF.d, z1 = z0 + SHELF.w, H = SHELF.h, t = 0.02;
-  g.add(boxMinMax(x0, x1, 0, H, z0, z0 + t, M.woodOak, 'shelf:side'));
-  g.add(boxMinMax(x0, x1, 0, H, z1 - t, z1, M.woodOak, 'shelf:side'));
-  g.add(boxMinMax(x0, x0 + 0.008, 0.06, H, z0 + t, z1 - t, M.paintWhite, 'shelf:back'));
-  g.add(boxMinMax(x0 + 0.02, x1 - 0.01, 0, 0.06, z0 + t, z1 - t, M.paintWhite, 'shelf:kick'));
-  const levels = [0.06, 0.42, 0.76, 1.1, 1.44, H - t];
-  for (const y of levels) g.add(boxMinMax(x0 + 0.008, x1, y, y + t, z0 + t, z1 - t, M.woodOak, 'shelf:board'));
-
-  const buckets = BOOK_MATS.map(() => []);
-  const zi0 = z0 + t + 0.01, zi1 = z1 - t - 0.01;
-  // 第 1 層：收納盒＋大書
-  const boxW = 0.28;
-  g.add(boxMinMax(x0 + 0.03, x1 - 0.02, levels[0] + t, levels[0] + t + 0.26, zi0, zi0 + boxW, M.rattan, 'shelf:basket', 0.02));
-  g.add(boxMinMax(x0 + 0.03, x1 - 0.02, levels[0] + t, levels[0] + t + 0.26, zi0 + boxW + 0.02, zi0 + boxW * 2 + 0.02, M.rattan, 'shelf:basket', 0.02));
-  bookRowZ(rng, buckets, { xBack: x0 + 0.03, y: levels[0] + t, z0: zi0 + boxW * 2 + 0.05, z1: zi1, maxH: 0.31, minH: 0.25, depth: [0.2, 0.26] });
-  // 第 2 層：滿滿的書
-  bookRowZ(rng, buckets, { xBack: x0 + 0.02, y: levels[1] + t, z0: zi0, z1: zi1 - 0.04, maxH: 0.29, minH: 0.2 });
-  // 第 3 層：半排書＋花瓶
-  const e3 = bookRowZ(rng, buckets, { xBack: x0 + 0.02, y: levels[2] + t, z0: zi0, z1: zi0 + 0.45, maxH: 0.27, minH: 0.18 });
-  const vz = (e3 + zi1) / 2;
-  const vase = mesh(new THREE.LatheGeometry(
-    [[0.001, 0], [0.05, 0.003], [0.065, 0.06], [0.05, 0.13], [0.022, 0.17], [0.026, 0.2], [0.02, 0.2]].map(([r, y]) => new THREE.Vector2(r, y)), 20), M.ceramicWhite, 'shelf:vase');
-  vase.position.set((x0 + x1) / 2 + 0.01, levels[2] + t, vz);
-  g.add(vase);
-  for (let i = 0; i < 3; i++) {
-    const s = cyl(0.002, 0.002, 0.22, M.stem, 'shelf:twig', vase.position.x, levels[2] + t + 0.28, vz, 5);
-    s.rotation.set(rng.jitter(0, 0.25), 0, rng.jitter(0, 0.25));
-    g.add(s);
+  g.name = `${ROOM}:sideTable`;
+  const h = 0.44, r = 0.15;
+  const body = new THREE.CylinderGeometry(r, r, h - 0.03, 96, 1, true);
+  const p = body.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    const a = Math.atan2(z, x);
+    const k = 1 - 0.05 * Math.abs(Math.sin(a * 12));
+    p.setX(i, x * k); p.setZ(i, z * k);
   }
-  // 第 4 層：一排書＋倒下的書堆
-  const e4 = bookRowZ(rng, buckets, { xBack: x0 + 0.02, y: levels[3] + t, z0: zi0 + 0.25, z1: zi1, maxH: 0.28, minH: 0.18 });
-  void e4;
-  bookStack(rng, g, (x0 + x1) / 2 + 0.015, levels[3] + t, zi0 + 0.12, 4, 'shelf:stack', Math.PI / 2);
-  // 頂層：相框＋小物
-  const frame = new THREE.Group();
-  frame.name = `${ROOM}:shelf:photo`;
-  frame.add(boxMinMax(-0.01, 0.01, 0, 0.2, -0.075, 0.075, M.woodWalnut, 'shelf:photoFrame'));
-  frame.add(boxMinMax(0.01, 0.012, 0.025, 0.175, -0.05, 0.05, M.paintCharcoal, 'shelf:photoArt'));
-  frame.position.set(x0 + 0.08, levels[4] + t, zi0 + 0.15);
-  frame.rotation.z = -0.08;
-  g.add(frame);
-  bookRowZ(rng, buckets, { xBack: x0 + 0.02, y: levels[4] + t, z0: zi0 + 0.33, z1: zi1 - 0.12, maxH: 0.26, minH: 0.2 });
-  g.add(cyl(0.035, 0.035, 0.07, M.paintCharcoal, 'shelf:candle', (x0 + x1) / 2, levels[4] + t + 0.035, zi1 - 0.06, 16));
-  // 架頂：小盆栽＋收納盒
-  g.add(boxMinMax(x0 + 0.03, x1 - 0.02, H, H + 0.14, z0 + 0.05, z0 + 0.4, M.paintCream, 'shelf:topBox', 0.01));
-  addMerged(g, buckets, BOOK_MATS, 'shelf:books');
-  return { group: g, x1, z1 };
-}
-
-// ═══════════════════════════════════════════════════════
-// 書桌上方的左牆：軟木板＋層板
-// ═══════════════════════════════════════════════════════
-function buildDeskWall(I, rng, zA, zB) {
-  const g = new THREE.Group();
-  g.name = `${ROOM}:deskWall`;
-  const wx = I.x0;
-  // 軟木板（沒有軟木材質，用燕麥色布料代替）
-  const by0 = 1.02, by1 = 1.58;
-  g.add(boxMinMax(wx, wx + 0.025, by0 - 0.02, by1 + 0.02, zA - 0.02, zB + 0.02, M.woodOak, 'corkboard:frame'));
-  g.add(boxMinMax(wx + 0.025, wx + 0.03, by0, by1, zA, zB, M.cork, 'corkboard'));
-  const notes = [M.paperWhite, M.fabricBlush, M.paperWhite, M.paintCream, M.paperWhite, M.fabricBoucle, M.paperWhite];
-  const cols = 4, rows = 2;
-  let k = 0;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (rng.chance(0.15)) continue;
-      const w = rng.range(0.08, 0.16), h = rng.range(0.08, 0.17);
-      const cz = zA + ((zB - zA) / cols) * (c + 0.5) + rng.jitter(0, 0.02);
-      const cy = by0 + ((by1 - by0) / rows) * (r + 0.5) + rng.jitter(0, 0.02);
-      const n = box(0.002, h, w, notes[k++ % notes.length], 'corkboard:note', wx + 0.031, cy, cz);
-      n.rotation.x = rng.jitter(0, 0.12);
-      g.add(n);
-      g.add(cyl(0.006, 0.006, 0.008, M.metalBrass, 'corkboard:pin', wx + 0.034, cy + h / 2 - 0.015, cz, 8).rotateZ(Math.PI / 2));
-    }
-  }
-  // 層板＋托架
-  const sy = 1.78, sd = 0.2;
-  g.add(boxMinMax(wx, wx + sd, sy, sy + 0.025, zA, zB, M.woodOak, 'wallShelf'));
-  for (const bz of [zA + 0.08, zB - 0.08]) {
-    g.add(boxMinMax(wx, wx + 0.15, sy - 0.12, sy, bz - 0.006, bz + 0.006, M.metalBlack, 'wallShelf:bracket'));
-  }
-  const buckets = BOOK_MATS.map(() => []);
-  const e = bookRowZ(rng, buckets, { xBack: wx + 0.01, y: sy + 0.025, z0: zA + 0.03, z1: zA + (zB - zA) * 0.55, maxH: 0.24, minH: 0.17, depth: [0.13, 0.17] });
-  addMerged(g, buckets, BOOK_MATS, 'wallShelf:books');
-  // 書擋
-  g.add(boxMinMax(wx + 0.03, wx + 0.15, sy + 0.025, sy + 0.17, e + 0.005, e + 0.012, M.metalBlack, 'wallShelf:bookend'));
-  // 垂吊小植物（綠蘿）
-  const px = wx + 0.1, pz = zB - 0.12;
-  g.add(cyl(0.06, 0.045, 0.1, M.ceramicWhite, 'wallShelf:pot', px, sy + 0.075, pz, 18));
-  g.add(cyl(0.055, 0.055, 0.004, M.soil, 'wallShelf:soil', px, sy + 0.118, pz, 18));
-  const leaves = [];
-  const leafGeo = () => new THREE.SphereGeometry(0.025, 6, 4).scale(1, 0.25, 0.8);
-  for (let v = 0; v < 4; v++) {
-    const a = rng.range(-0.5, 2.5);
-    const len = rng.range(0.25, 0.55);
-    for (let i = 0; i < 8; i++) {
-      const tt = i / 7;
-      const lg = leafGeo();
-      lg.rotateY(rng.range(0, Math.PI * 2));
-      lg.rotateX(rng.jitter(0.4, 0.3));
-      const rr = 0.05 + tt * 0.05;
-      lg.translate(px + Math.max(-0.08, Math.cos(a) * rr), sy + 0.12 - tt * len, pz + Math.sin(a) * rr);
-      leaves.push(lg);
-    }
-  }
-  g.add(mesh(mergeGeometries(leaves), M.leafGreen, 'wallShelf:pothos'));
-  return g;
-}
-
-// ═══════════════════════════════════════════════════════
-// 琴葉榕盆栽
-// ═══════════════════════════════════════════════════════
-function buildPlant(rng, cx, cz) {
-  const g = new THREE.Group();
-  g.name = `${ROOM}:plant`;
-  const potH = 0.32;
-  const potGeo = new THREE.LatheGeometry(
-    [[0.001, 0], [0.12, 0], [0.135, 0.02], [0.16, potH - 0.02], [0.165, potH], [0.15, potH], [0.15, potH - 0.03], [0.001, potH - 0.03]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
-  const pot = mesh(potGeo, M.ceramicMatte, 'plant:pot');
-  pot.position.set(cx, 0.03, cz);
-  g.add(pot);
-  g.add(cyl(0.13, 0.11, 0.03, M.woodWalnut, 'plant:stand', cx, 0.015, cz, 24));
-  g.add(cyl(0.15, 0.15, 0.005, M.soil, 'plant:soil', cx, 0.03 + potH - 0.035, cz, 24));
-
+  body.computeVertexNormals();
+  g.add(place(cylUV(body), M.woodOak, 'sideTable:fluted', 0, (h - 0.03) / 2, 0));
+  g.add(place(G.lathe([[0, 0], [r + 0.012, 0], [r + 0.016, 0.006], [r + 0.016, 0.024], [r + 0.01, 0.03], [0, 0.03]], 64), M.woodOak, 'sideTable:top', 0, h - 0.03, 0));
+  // 小植物（白陶盆）
+  g.add(place(G.lathe([[0, 0], [0.045, 0], [0.055, 0.02], [0.062, 0.1], [0.058, 0.1], [0.05, 0.022], [0, 0.022]], 40), M.ceramicWhite, 'plant:pot', 0.02, h, -0.03));
+  g.add(place(G.lathe([[0, 0], [0.056, 0], [0, 0.004]], 24), M.soil, 'plant:soil', 0.02, h + 0.088, -0.03));
   const stems = [], leaves = [];
-  const leafShape = new THREE.Shape();
-  leafShape.moveTo(0, 0);
-  leafShape.bezierCurveTo(0.07, 0.03, 0.08, 0.2, 0.0, 0.26);
-  leafShape.bezierCurveTo(-0.08, 0.2, -0.07, 0.03, 0, 0);
-  const trunks = 3;
-  const baseY = 0.03 + potH - 0.03;
-  for (let t = 0; t < trunks; t++) {
-    const a = (t / trunks) * Math.PI * 2 + rng.range(0, 1);
-    const h = rng.range(0.85, 1.25);
-    const lean = rng.range(0.03, 0.08);
-    const tx = cx + Math.cos(a) * lean, tz = cz + Math.sin(a) * lean;
-    const sg = new THREE.CylinderGeometry(0.008, 0.014, h, 7);
-    const dx = tx - cx, dz = tz - cz;
-    sg.translate(0, h / 2, 0);
-    sg.rotateZ(-dx * 0.6);
-    sg.rotateX(dz * 0.6);
-    sg.translate(cx + Math.cos(a) * 0.02, baseY, cz + Math.sin(a) * 0.02);
-    stems.push(sg);
-    const nLeaves = rng.int(11, 14);
-    for (let i = 0; i < nLeaves; i++) {
-      const tt = 0.3 + (i / nLeaves) * 0.7;
-      const lg = new THREE.ShapeGeometry(leafShape, 4);
-      const s = rng.range(0.75, 1.15) * (0.75 + tt * 0.35);
-      lg.scale(s, s, s);
-      lg.rotateY(Math.PI / 2 + rng.jitter(0, 0.4));          // 葉面朝外
-      lg.rotateZ(-rng.range(0.6, 1.2));                      // 往外傾
-      lg.rotateY(rng.range(0, Math.PI * 2));                 // 方位
-      lg.translate(cx + Math.cos(a) * (0.02 + lean * tt), baseY + h * tt, cz + Math.sin(a) * (0.02 + lean * tt));
+  for (let s = 0; s < 5; s++) {
+    const a = rng.range(0, Math.PI * 2), tl = rng.range(0.12, 0.3), ht = rng.range(0.18, 0.32);
+    const tip = [0.02 + Math.cos(a) * tl * 0.35, h + 0.09 + ht, -0.03 + Math.sin(a) * tl * 0.35];
+    stems.push(G.tube([[0.02, h + 0.085, -0.03], [0.02 + Math.cos(a) * 0.02, h + 0.09 + ht * 0.5, -0.03 + Math.sin(a) * 0.02], tip], 0.0028, { segments: 8, radial: 5 }));
+    for (let k = 0; k < 5; k++) {
+      const t = 0.4 + 0.6 * (k / 4);
+      const lg = new THREE.SphereGeometry(0.028, 8, 6).scale(1, 0.15, 0.55);
+      lg.rotateZ(rng.jitter(0.3, 0.4));
+      lg.rotateY(rng.range(0, Math.PI * 2));
+      lg.translate(0.02 + (tip[0] - 0.02) * t + rng.jitter(0, 0.02), h + 0.09 + ht * t, -0.03 + (tip[2] + 0.03) * t + rng.jitter(0, 0.02));
       leaves.push(lg);
     }
   }
-  g.add(mesh(mergeGeometries(stems), M.stem, 'plant:stems'));
-  g.add(mesh(mergeGeometries(leaves), M.leafDark, 'plant:leaves'));
+  g.add(mesh(G.worldUV(mergeGeometries(stems)), M.stem, 'plant:stems'));
+  g.add(mesh(G.worldUV(mergeGeometries(leaves)), M.leafGreen, 'plant:leaves'));
   return g;
 }
 
 // ═══════════════════════════════════════════════════════
-// 地毯＋坐墩
+// 西牆貓跳台
 // ═══════════════════════════════════════════════════════
-function buildRug(x0, x1, z0, z1) {
+/** 浮空層板（圓角），貼西牆，top = 上表面高度 */
+function shelf(wx, zc, top, len, depth, name) {
+  return place(G.extrudeRounded(G.roundedRectShape(depth - 0.012, len - 0.012, 0.035), SHELF_T, 0.005), M.woodOak, name, wx + depth / 2, top - SHELF_T, zc);
+}
+/** 麻繩貓抓柱：一圈圈繩紋的車削柱，上下木圓盤 */
+function scratchPost(x, y0, y1, z, name) {
   const g = new THREE.Group();
-  g.name = `${ROOM}:rug`;
-  g.add(boxMinMax(x0, x1, 0, 0.012, z0, z1, M.rugWool, 'rug', 0.005));
-  const b = 0.07, s = 0.025;
-  // 兩道細邊框（陶土色）
-  for (const inset of [b, b + s + 0.02]) {
-    const w = 0.014;
-    g.add(boxMinMax(x0 + inset, x1 - inset, 0.012, 0.0135, z0 + inset, z0 + inset + w, M.rugPattern, 'rug:border'));
-    g.add(boxMinMax(x0 + inset, x1 - inset, 0.012, 0.0135, z1 - inset - w, z1 - inset, M.rugPattern, 'rug:border'));
-    g.add(boxMinMax(x0 + inset, x0 + inset + w, 0.012, 0.0135, z0 + inset, z1 - inset, M.rugPattern, 'rug:border'));
-    g.add(boxMinMax(x1 - inset - w, x1 - inset, 0.012, 0.0135, z0 + inset, z1 - inset, M.rugPattern, 'rug:border'));
+  g.name = `${ROOM}:${name}`;
+  const h = y1 - y0, r = 0.055, pitch = 0.018;
+  const prof = [[0, 0], [r - 0.004, 0]];
+  for (let y = 0.004; y < h - 0.004; y += pitch / 2) prof.push([Math.round(y / (pitch / 2)) % 2 ? r : r - 0.0045, y]);
+  prof.push([r - 0.004, h], [0, h]);
+  g.add(place(G.lathe(prof, 28), M.fabricOat, `${name}:rope`, x, y0, z));
+  g.add(place(G.lathe([[0, 0], [r + 0.02, 0], [r + 0.022, 0.006], [r + 0.02, 0.014], [0, 0.014]], 32), M.woodOak, `${name}:base`, x, y0, z));
+  return g;
+}
+/** 貓屋：正面挖貓頭形開口，開口朝 +x */
+function catHouse(wx, zc, y0, name) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:${name}`;
+  const D = 0.36, W = 0.42, H = 0.38, t = 0.018;
+  const x0 = wx, x1 = wx + D, z0 = zc - W / 2, z1 = zc + W / 2;
+  g.add(boxMinMax(x0, x1 - t, y0, y0 + t, z0, z1, M.woodOak, `${name}:floor`));
+  g.add(boxMinMax(x0, x1 - t, y0 + H - t, y0 + H, z0, z1, M.woodOak, `${name}:roof`));
+  g.add(boxMinMax(x0, x1 - t, y0 + t, y0 + H - t, z0, z0 + t, M.woodOak, `${name}:side`));
+  g.add(boxMinMax(x0, x1 - t, y0 + t, y0 + H - t, z1 - t, z1, M.woodOak, `${name}:side`));
+  g.add(boxMinMax(x0, x0 + t, y0 + t, y0 + H - t, z0 + t, z1 - t, M.woodOakDark, `${name}:back`));
+  // 正面：圓角方板＋貓頭開口（圓臉＋兩個三角耳）
+  const outer = new THREE.Shape();
+  const rr = 0.02, hw = W / 2, hh = H / 2;
+  outer.moveTo(-hw + rr, -hh);
+  outer.lineTo(hw - rr, -hh); outer.quadraticCurveTo(hw, -hh, hw, -hh + rr);
+  outer.lineTo(hw, hh - rr); outer.quadraticCurveTo(hw, hh, hw - rr, hh);
+  outer.lineTo(-hw + rr, hh); outer.quadraticCurveTo(-hw, hh, -hw, hh - rr);
+  outer.lineTo(-hw, -hh + rr); outer.quadraticCurveTo(-hw, -hh, -hw + rr, -hh);
+  const hole = new THREE.Path();
+  const cy = -0.005, R = 0.105;
+  const ear = (deg, c) => Math.max(0, 1 - Math.abs(deg - c) / 17);
+  for (let i = 0; i <= 120; i++) {
+    const deg = 270 - (i / 120) * 360; // 順時針（洞要與外框反向）
+    const d = ((deg % 360) + 360) % 360;
+    const r = R + 0.07 * Math.max(ear(d, 52), ear(d, 128));
+    const a = THREE.MathUtils.degToRad(deg);
+    const px = Math.cos(a) * r, py = cy + Math.sin(a) * r;
+    i ? hole.lineTo(px, py) : hole.moveTo(px, py);
   }
-  // 中央菱形圖樣
-  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-  for (const [dx, dz] of [[0, 0], [-0.22, 0], [0.22, 0], [0, -0.22], [0, 0.22]]) {
-    const d = box(0.1, 0.0015, 0.1, M.rugPattern, 'rug:motif', cx + dx, 0.0125, cz + dz);
-    d.rotation.y = Math.PI / 4;
-    g.add(d);
+  outer.holes.push(hole);
+  const front = new THREE.ExtrudeGeometry(outer, { depth: t - 0.006, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 2, curveSegments: 12 });
+  front.rotateY(Math.PI / 2);
+  g.add(place(G.worldUV(front), M.woodOak, `${name}:front`, x1 - t + 0.003, y0 + hh, zc));
+  // 內墊
+  g.add(place(G.mattress(D - 0.06, 0.035, W - 0.06, { radius: 0.015, crown: 0.008 }), M.fabricOat, `${name}:mat`, (x0 + x1 - t) / 2, y0 + t + 0.0175, zc));
+  return { group: g, floorY: y0 + t + 0.035, cx: (x0 + x1 - t) / 2 };
+}
+/** 吊橋：兩條下垂的繩＋扶手繩＋一片片木板 */
+function catBridge(xa, xb, za, zb, y, sag, rng) {
+  const g = new THREE.Group();
+  g.name = `${ROOM}:bridge`;
+  const yAt = (t) => y - sag * 4 * t * (1 - t);
+  const rope = [], planks = [];
+  const n = 13;
+  for (const x of [xa, xb]) {
+    rope.push(G.tube(Array.from({ length: 13 }, (_, i) => { const t = i / 12; return [x, yAt(t) - 0.008, za + (zb - za) * t]; }), 0.005, { segments: 40, radial: 6 }));
+    rope.push(G.tube(Array.from({ length: 13 }, (_, i) => { const t = i / 12; return [x, y + 0.09 - sag * 0.55 * 4 * t * (1 - t), za + (zb - za) * t]; }), 0.004, { segments: 40, radial: 6 }));
   }
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    const z = za + (zb - za) * t, yy = yAt(t);
+    const slope = (sag * 4 * (2 * t - 1)) / (zb - za);
+    const pk = G.roundedBox(xb - xa + 0.03, 0.012, (zb - za) / n - 0.012, 0.003);
+    pk.rotateX(-Math.atan(slope));
+    pk.rotateY(rng.jitter(0, 0.02));
+    pk.translate((xa + xb) / 2, yy, z);
+    planks.push(pk);
+    if (i % 2 === 0) {
+      for (const x of [xa, xb]) {
+        const yTop = y + 0.09 - sag * 0.55 * 4 * t * (1 - t);
+        rope.push(G.tube([[x, yy, z], [x, yTop, z]], 0.0025, { segments: 2, radial: 4 }));
+      }
+    }
+  }
+  g.add(mesh(mergeGeometries(rope), M.fabricOat, 'bridge:ropes'));
+  g.add(mesh(mergeGeometries(planks), M.woodOak, 'bridge:planks'));
   return g;
 }
 
 // ═══════════════════════════════════════════════════════
-// 床邊右牆：掛畫＋壁燈
+// 簡化坐姿貓（面向 +x，原點在腳底中心）
 // ═══════════════════════════════════════════════════════
-function buildBedWall(I, bedZ0, sill) {
+function buildCat(name, coat, belly, rng, s = 1) {
   const g = new THREE.Group();
-  g.name = `${ROOM}:bedWall`;
-  const wx = I.x1;
-  // 掛畫：胡桃木框、白卡紙、幾何色塊（日落）
-  const az0 = bedZ0 + 0.35, az1 = az0 + 0.55, ay0 = 1.12, ay1 = ay0 + 0.7;
-  g.add(boxMinMax(wx - 0.03, wx, ay0, ay1, az0, az1, M.woodWalnut, 'art:frame'));
-  g.add(boxMinMax(wx - 0.032, wx - 0.03, ay0 + 0.025, ay1 - 0.025, az0 + 0.025, az1 - 0.025, M.paperWhite, 'art:mat'));
-  const midZ = (az0 + az1) / 2;
-  const sun = mesh(new THREE.CircleGeometry(0.12, 32), M.fabricTerracotta, 'art:sun', { cast: false });
-  sun.rotation.y = -Math.PI / 2;
-  sun.position.set(wx - 0.0335, ay0 + 0.42, midZ);
-  g.add(sun);
-  g.add(boxMinMax(wx - 0.035, wx - 0.033, ay0 + 0.1, ay0 + 0.3, az0 + 0.08, az1 - 0.08, M.fabricTaupe, 'art:hill', 0));
-  g.add(boxMinMax(wx - 0.036, wx - 0.034, ay0 + 0.1, ay0 + 0.18, az0 + 0.08, az1 - 0.08, M.fabricBoucle, 'art:field'));
-  // 第二幅小畫
-  const bz0 = az1 + 0.12, bz1 = bz0 + 0.3;
-  g.add(boxMinMax(wx - 0.025, wx, ay0 + 0.22, ay0 + 0.62, bz0, bz1, M.woodOak, 'art2:frame'));
-  g.add(boxMinMax(wx - 0.027, wx - 0.025, ay0 + 0.25, ay0 + 0.59, bz0 + 0.03, bz1 - 0.03, M.paintCream, 'art2:mat'));
-  g.add(boxMinMax(wx - 0.029, wx - 0.027, ay0 + 0.32, ay0 + 0.52, bz0 + 0.07, bz1 - 0.07, M.paintCharcoal, 'art2:block'));
-
-  // 床頭壁燈（右牆、靠床頭；高度高於床頭板，但遠離窗）
-  const sz = I.z1 - 0.32, sy = Math.max(sill + 0.2, 1.1);
-  g.add(cyl(0.045, 0.045, 0.015, M.metalBrass, 'sconce:plate', wx - 0.0075, sy, sz, 20).rotateZ(Math.PI / 2));
-  const arm = cyl(0.006, 0.006, 0.18, M.metalBrass, 'sconce:arm', wx - 0.09, sy + 0.02, sz, 8);
-  arm.rotation.z = Math.PI / 2 - 0.2;
-  g.add(arm);
-  g.add(cyl(0.05, 0.075, 0.12, M.lampShade, 'sconce:shade', wx - 0.18, sy + 0.04, sz, 24));
-  const bulb = mesh(new THREE.SphereGeometry(0.022, 10, 8), M.lampBulb, 'sconce:bulb', { cast: false });
-  bulb.position.set(wx - 0.18, sy + 0.0, sz);
-  g.add(bulb);
-  return { group: g, light: [wx - 0.18, sy - 0.02, sz] };
-}
-
-// ═══════════════════════════════════════════════════════
-// 踢腳板（避開門的掃掠區）
-// ═══════════════════════════════════════════════════════
-function buildBaseboards(I, swing) {
-  const g = new THREE.Group();
-  g.name = `${ROOM}:baseboards`;
-  const h = 0.08, t = 0.012;
-  g.add(boxMinMax(I.x0, I.x0 + t, 0, h, I.z0, I.z1, M.baseboard, 'baseboard'));
-  g.add(boxMinMax(I.x1 - t, I.x1, 0, h, I.z0, I.z1, M.baseboard, 'baseboard'));
-  g.add(boxMinMax(I.x0, I.x1, 0, h, I.z1 - t, I.z1, M.baseboard, 'baseboard'));
-  // 上牆：門洞與掃掠區之外
-  const doorTo = swing ? swing.x1 : I.x0;
-  g.add(boxMinMax(doorTo + 0.01, I.x1, 0, h, I.z0, I.z0 + t, M.baseboard, 'baseboard'));
+  g.name = `${ROOM}:${name}`;
+  // 身體：梨形車削，前後略扁
+  const body = G.lathe([[0, 0], [0.075, 0.004], [0.098, 0.04], [0.1, 0.085], [0.087, 0.135], [0.062, 0.175], [0.036, 0.2], [0, 0.205]], 32);
+  body.scale(1.05, 1, 0.85);
+  g.add(place(body, coat, `${name}:body`, -0.01, 0, 0));
+  // 胸口白毛
+  g.add(place(sphere(0.055).scale(0.6, 1.2, 1), belly, `${name}:chest`, 0.06, 0.12, 0));
+  // 頭
+  const hy = 0.255;
+  g.add(place(sphere(0.07, 28, 20).scale(0.95, 0.88, 1.08), coat, `${name}:head`, 0.025, hy, 0));
+  // 口鼻（兩顆小鼓起）＋鼻子
+  for (const z of [-0.017, 0.017]) g.add(place(sphere(0.022).scale(0.8, 0.75, 1), belly, `${name}:muzzle`, 0.08, hy - 0.025, z));
+  g.add(place(sphere(0.008, 10, 8).scale(0.7, 0.6, 1), M.fabricBlush, `${name}:nose`, 0.098, hy - 0.012, 0));
+  // 眼睛（大圓眼＋亮點）
+  for (const z of [-0.028, 0.028]) {
+    g.add(place(sphere(0.0135, 16, 12).scale(0.55, 1, 1), M.plasticBlack, `${name}:eye`, 0.083, hy + 0.008, z));
+    g.add(place(sphere(0.004, 8, 6), M.plasticWhite, `${name}:eyeGlint`, 0.091, hy + 0.013, z - 0.004 * Math.sign(z)));
+  }
+  // 耳朵（外＋粉色內耳）
+  for (const sz of [-1, 1]) {
+    const e = new THREE.ConeGeometry(0.03, 0.055, 4, 1);
+    e.rotateY(Math.PI / 4);
+    e.scale(0.55, 1, 1);
+    g.add(place(G.worldUV(e), coat, `${name}:ear`, 0.02, hy + 0.068, sz * 0.042, [0, 0, 0], undefined));
+    g.children[g.children.length - 1].rotation.set(sz * 0.32, 0, -0.08);
+    const ie = new THREE.ConeGeometry(0.018, 0.035, 4, 1);
+    ie.rotateY(Math.PI / 4);
+    ie.scale(0.3, 1, 1);
+    const inner = place(G.worldUV(ie), M.fabricBlush, `${name}:earInner`, 0.032, hy + 0.064, sz * 0.042);
+    inner.rotation.set(sz * 0.32, 0, -0.08);
+    g.add(inner);
+  }
+  // 前腳
+  for (const z of [-0.03, 0.03]) {
+    g.add(place(G.tube([[0.06, 0.1, z], [0.072, 0.05, z], [0.074, 0.012, z]], 0.019, { segments: 8, radial: 10 }), coat, `${name}:leg`, 0, 0, 0));
+    g.add(place(sphere(0.021).scale(1.3, 0.6, 1), belly, `${name}:paw`, 0.082, 0.011, z));
+  }
+  // 後腿（側面鼓起）
+  for (const z of [-0.07, 0.07]) g.add(place(sphere(0.05).scale(1.2, 0.8, 0.6), coat, `${name}:haunch`, -0.02, 0.045, z));
+  // 尾巴：從背後繞到前腳旁
+  const tail = [[-0.1, 0.03, 0], [-0.13, 0.02, -0.05], [-0.08, 0.012, -0.1], [0.0, 0.012, -0.11], [0.07, 0.014, -0.08]];
+  g.add(place(G.tube(tail, 0.017, { segments: 30, radial: 10 }), coat, `${name}:tail`, 0, 0, 0));
+  g.add(place(sphere(0.017), coat, `${name}:tailTip`, 0.07, 0.014, -0.08));
+  g.scale.setScalar(s);
+  g.rotation.y = rng.jitter(0, 0.15);
   return g;
 }
 
@@ -673,62 +552,89 @@ export function build() {
   const win = L.openingsOfRoom(ROOM).find((o) => o.category === 'window' && o.side === 'z1');
   const sill = win?.sill ?? L.WINDOW.sill;
   const swingZ1 = swing ? swing.z1 : I.z0;
+  const winClearZ = I.z1 - 0.1;     // 高於窗台的東西不可超過這條線（百葉簾＋0.15m 規則）
 
-  // 衣櫃（右上角）
-  const wardrobe = buildWardrobe(I);
-  root.add(wardrobe.group);
-
-  // 床（右牆，床頭靠南）
-  const bed = buildBed(I, rng, sill);
-  root.add(bed.group);
-
-  // 書桌（南窗下，左牆到床邊）
-  const desk = buildDesk(I, rng, bed.x0 - 0.16, win);
+  // ── 南端地台（先定 z，書桌南段收納櫃與它對齊） ──
+  const platZ0 = I.z1 - PLAT.d;
+  // 東牆北段：門掃掠區旁的頂天書櫃，之後接書桌（書桌往南到窗牆）
+  const caseZ1 = Math.min(I.z0 + 0.82, platZ0 - 1.6);
+  root.add(buildBookcase(I, I.z0, caseZ1, rng));
+  const desk = buildDesk(I, platZ0, caseZ1 + 0.004);
   root.add(desk.group);
+  root.add(buildDeskItems(desk, rng, platZ0));
+  const platform = buildPlatform(I, desk.x0);
+  root.add(platform.group);
 
-  // 椅子（桌前、略拉出、微轉）
-  const chairX = (desk.x0 + desk.x1) / 2 - 0.02;
-  root.add(buildChair(chairX, desk.z0 - 0.04, rng.jitter(0, 0.12)));
+  // 辦公椅：桌前工作區中央，面向書桌（+x）
+  const chair = buildOfficeChair(rng);
+  chair.position.set(desk.x0 - 0.36, 0, (I.z0 + platZ0) / 2 + 0.02);
+  chair.rotation.y = Math.PI / 2 + rng.jitter(-0.12, 0.05);
+  root.add(chair);
 
-  // 書架（左牆，門掃掠區之後）
-  const shelf = buildBookshelf(I, rng, swingZ1 + 0.08);
-  root.add(shelf.group);
+  // ── 地台上：躺椅（頭端靠窗、朝房內斜放）＋邊几 ──
+  const chaise = buildChaise(rng);
+  const chaiseYaw = -0.28;
+  chaise.position.set((platform.x0 + platform.x1) / 2 + 0.03, platform.top, platZ0 + PLAT.d / 2 + 0.02);
+  chaise.rotation.y = chaiseYaw;
+  root.add(chaise);
+  const table = buildSideTable(rng);
+  table.position.set(platform.x1 - 0.2, platform.top, platZ0 + 0.27);
+  root.add(table);
 
-  // 軟木板＋層板（左牆，書桌上方）
-  root.add(buildDeskWall(I, rng, shelf.z1 + 0.2, I.z1 - 0.1));
+  // ── 西牆貓跳台 ──
+  const wx = I.x0;
+  const zA = Math.max(swingZ1 + 0.05, I.z0);           // 門掃掠區以南
+  const zE = I.z1;
+  const shelves = [
+    // [z 中心, 上表面高度, 長(z), 深(x)]
+    [zA + 0.65, 0.52, 0.4, 0.3],            // 0 低踏階
+    [platZ0 + 0.2, 0.86, 0.42, 0.3],        // 1 白貓層板（地台上方）
+    [zA + 0.25, 1.3, 0.42, 0.32],           // 2 貓抓柱 A 的頂
+    [zA + 0.75, 1.62, 0.38, 0.3],           // 3
+    [zA + 1.3, 1.98, 0.38, 0.3],            // 4 吊橋起點
+    [zE - 0.3, 1.4, 0.4, 0.3],              // 5 貓抓柱 B 的頂
+    [platZ0 + 0.52, 1.92, 0.52, 0.38],      // 6 貓屋底板（吊橋終點）
+    [zA + 0.75, 2.38, 0.38, 0.28],          // 7 高處
+    [Math.max(I.z0 + 0.2, zA - 0.25), 2.42, 0.34, 0.26], // 8 門上方（高於門高）
+    [zA + 1.78, 1.25, 0.4, 0.3],            // 9 中段
+    [zA + 2.05, 0.62, 0.4, 0.3],            // 10 地台前低踏階
+  ];
+  shelves.forEach(([zc, top, len, dep], i) => root.add(shelf(wx, zc, top, len, dep, `catShelf${i}`)));
+  // 貓抓柱
+  root.add(scratchPost(wx + 0.16, 0, shelves[2][1] - SHELF_T, shelves[2][0], 'scratchPostA'));
+  root.add(scratchPost(wx + 0.15, platform.top, shelves[5][1] - SHELF_T, shelves[5][0], 'scratchPostB'));
+  // 貓屋
+  const house = catHouse(wx, shelves[6][0], shelves[6][1], 'catHouse');
+  root.add(house.group);
+  // 吊橋：層板 4 的南緣 → 貓屋層板的北緣
+  const bz0 = shelves[4][0] + shelves[4][2] / 2 - 0.02;
+  const bz1 = shelves[6][0] - shelves[6][2] / 2 + 0.02;
+  root.add(catBridge(wx + 0.05, wx + 0.25, bz0, bz1, shelves[4][1] + 0.004, 0.16, rng));
 
-  // 地毯（書架與床之間）
-  root.add(buildRug(shelf.x1 + 0.1, bed.x0 + 0.25, swingZ1 + 0.12, desk.z0 - 0.08));
+  // 貓咪：白貓坐在層板 1（地台上方），虎斑貓在貓屋裡往外看
+  const white = buildCat('catWhite', M.fabricWhite, M.fabricWhite, rng.fork('catWhite'), 1);
+  white.position.set(wx + 0.15, shelves[1][1], shelves[1][0]);
+  root.add(white);
+  const tabby = buildCat('catTabby', M.fabricTaupe, M.fabricOat, rng.fork('catTabby'), 0.74);
+  tabby.position.set(house.cx + 0.05, house.floorY, shelves[6][0]);
+  tabby.rotation.y = 0;
+  root.add(tabby);
 
-  // 坐墩（地毯上、靠床邊）
-  const poufX = bed.x0 - 0.3, poufZ = swingZ1 + 0.45;
-  root.add(cyl(0.21, 0.22, 0.36, M.fabricBoucle, 'pouf', poufX, 0.18, poufZ, 28));
-  root.add(cyl(0.2, 0.2, 0.004, M.fabricBoucle, 'pouf:top', poufX, 0.362, poufZ, 28));
-  const poufBooks = new THREE.Group();
-  root.add(poufBooks);
-  bookStack(rng, poufBooks, poufX, 0.364, poufZ, 2, 'poufBooks', 0.6);
+  // 踢腳板（北牆門東側、西牆門掃掠區到地台）
+  const bb = new THREE.Group();
+  bb.name = `${ROOM}:baseboards`;
+  if (swing) bb.add(boxMinMax(swing.x1 + 0.01, desk.x0, 0, 0.08, I.z0, I.z0 + 0.012, M.baseboard, 'baseboard'));
+  bb.add(boxMinMax(I.x0, I.x0 + 0.012, 0, 0.08, swingZ1 + 0.01, platZ0 - 0.012, M.baseboard, 'baseboard'));
+  root.add(bb);
 
-  // 盆栽（門掃掠區與衣櫃之間、靠上牆）
-  const plantX = swing ? (swing.x1 + wardrobe.x0) / 2 - 0.1 : I.x0 + 0.5;
-  root.add(buildPlant(rng, plantX, I.z0 + 0.3));
-
-  // 床邊右牆
-  const bedWall = buildBedWall(I, bed.z0, sill);
-  root.add(bedWall.group);
-
-  root.add(buildBaseboards(I, swing));
-
-  // 燈光（2 盞、暖色、不開陰影）
-  const deskLight = new THREE.PointLight(L.LIGHT_COLORS.k2700, 1.6, 3.2, 2);
-  deskLight.name = `${ROOM}:light:deskLamp`;
-  deskLight.position.set(...desk.lamp);
-  deskLight.castShadow = false;
-  root.add(deskLight);
-  const sconceLight = new THREE.PointLight(L.LIGHT_COLORS.k2700, 1.0, 2.5, 2);
-  sconceLight.name = `${ROOM}:light:sconce`;
-  sconceLight.position.set(...bedWall.light);
-  sconceLight.castShadow = false;
-  root.add(sconceLight);
-
+  // 燈光：吊櫃底 LED 暖光 ×2（不開陰影）
+  for (const [i, f] of [[0, 0.3], [1, 0.72]]) {
+    const pl = new THREE.PointLight(L.LIGHT_COLORS.k2700, 1.6, 2.8, 2);
+    pl.name = `${ROOM}:light:led${i}`;
+    pl.position.set(desk.ux0 + 0.08, desk.uy0 - 0.06, I.z0 + (I.z1 - I.z0) * f);
+    pl.castShadow = false;
+    root.add(pl);
+  }
+  void sill; void winClearZ;
   return root;
 }
