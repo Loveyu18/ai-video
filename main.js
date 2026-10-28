@@ -70,14 +70,18 @@ scene.add(buildShell());
 scene.environment = buildWarmEnvironment(renderer);
 
 // —— 導覽員角色（嘴型資料由 tools/voice.mjs 產生；沒有就閉嘴不動） ——
-// 有 avatar/guide.vrm（VRoid 匯出，不進 git）就用它，沒有就用程式生成的公仔；&procguide=1 強制用公仔
+// 角色依序找：avatar/guide.vrm（本機專用，不進 git）→ avatar-public/guide.vrm（屋主自己捏的，公開網站用）
+// → 都沒有就用程式生成的公仔。&procguide=1 強制用公仔
 let guide = null;
 if (!params.has('procguide')) {
-  try {
-    const { createVrmGuide } = await import('./guide-vrm.js');
-    guide = await createVrmGuide('./avatar/guide.vrm');
-  } catch (e) {
-    console.info('[guide] 沒有 VRM 角色，改用程式公仔：', e.message);
+  for (const url of ['./avatar/guide.vrm', './avatar-public/guide.vrm']) {
+    try {
+      const { createVrmGuide } = await import('./guide-vrm.js');
+      guide = await createVrmGuide(url);
+      break;
+    } catch (e) {
+      console.info(`[guide] ${url} 載入不到：`, e.message);
+    }
   }
 }
 guide ??= createGuide();
