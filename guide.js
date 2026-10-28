@@ -5,14 +5,13 @@
  *
  * 角色座標：腳底中心為原點、+z 為正面、y 向上，單位公尺。
  * 動作完全由時間 t 決定（呼吸、眨眼、轉頭、手勢、嘴型），所以每次輸出都一樣。
- * 站位與手勢來自 layout.GUIDE；嘴型來自 tools/voice.mjs 產生的 output/lipsync.json。
+ * 走位與動作來自 guide-motion.js（依 layout.GUIDE.script）；嘴型來自 tools/voice.mjs 產生的 output/lipsync.json。
  */
 import * as THREE from 'three';
 import * as G from './geo.js';
 import { M } from './materials.js';
-import { GUIDE, CAMERA_PATH } from './layout.js';
-import { cameraAt } from './camera.js';
 import { rngFor } from './rng.js';
+import { createMotion, solveTwoBone, quatMap } from './guide-motion.js';
 
 const { mesh } = G;
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -234,8 +233,19 @@ function buildTorso() {
     buckle.position.set(s * 0.112, 0.2, 0.11);
     pack.add(buckle);
   }
-  g.add(pack);
+  // 後背包預設不背（&pack=1 才背）
+  if (new URLSearchParams(globalThis.location?.search ?? '').get('pack') === '1') g.add(pack);
   return g;
+}
+
+/** 嘴型資料第 t 秒的值（key：values＝音量、shape＝音色） */
+export function lipsyncAt(lipsync, t, key = 'values') {
+  if (!lipsync) return 0;
+  for (const c of lipsync.clips) {
+    const i = Math.floor((t - c.at) * lipsync.fps);
+    if (i >= 0 && i < c.values.length) return c[key]?.[i] ?? 0.5;
+  }
+  return 0;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -291,114 +301,99 @@ export function createGuide() {
     o.receiveShadow = true;
   });
 
-  // —— 動作 ——
-  const DOWN = V(0, -1, 0);
-  /**
-   * 手臂朝向：手臂沿 dir 伸出，並指定手肘往 bendHint 方向彎（介紹時往前、揮手時往上）。
-   * 直接組出座標軸，避免手臂繞自身扭轉造成彎錯方向。
-   */
-  const aim = (dir, bendHint = V(0, 0, 1)) => {
-    const y = dir.clone().normalize().negate();             // 手臂本地 +y：從手指回到肩膀
-    const z = bendHint.clone().sub(y.clone().multiplyScalar(bendHint.dot(y))).normalize();
-    const x = new THREE.Vector3().crossVectors(y, z);
-    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  // —— 動作：走位與姿勢來自 guide-motion.js（和 VRM 角色共用），這裡用 IK 擺這副骨架 ——
+  const HIP_Y = 0.92;
+  const dims = {
+    hipY: HIP_Y, hipHalf: 0.085, thigh: 0.38, shin: 0.36, ankleY: HIP_Y - 0.06 - 0.38 - 0.36,
+    shoulder: [V(-0.188, HIP_Y + 0.08 + 0.385, 0), V(0.188, HIP_Y + 0.08 + 0.385, 0)],
+    upper: 0.27, fore: 0.235,
   };
-  const restQ = arms.map((a) => aim(V(a.side * 0.13, -1, -0.03)));
+  const motion = createMotion(dims);
+  // 這副骨架的手、腿靜止時都往下（-y）；手肘讓前臂往前（+z）折，膝蓋讓小腿往後（-z）折
+  const A0 = V(0, -1, 0), ARM_B0 = V(0, 0, 1), LEG_B0 = V(0, 0, -1);
+  const restQ = arms.map((a) => quatMap(A0, ARM_B0, V(a.side * 0.13, -1, -0.03), V(0, 0, 1)));
+  const rootQ = new THREE.Quaternion(), tmpQ = new THREE.Quaternion();
+  const setBodyQuat = (o, qBody) => {
+    o.parent.getWorldQuaternion(tmpQ);
+    o.quaternion.copy(tmpQ.premultiply(rootQ.clone().invert()).invert().multiply(qBody));
+  };
+  const wp = (o) => o.getWorldPosition(new THREE.Vector3());
   let lipsync = null;
-  const shotIndex = new Map(CAMERA_PATH.map((s, i) => [s.name, i]));
-  const yawCache = new Map();
 
-  /** 某個鏡頭中，角色要面向的方向（鏡頭中段的攝影機位置） */
-  function bodyYaw(shot, spot) {
-    if (!yawCache.has(shot.name)) {
-      const cam = cameraAt((shot.start + shot.end) / 2).position;
-      yawCache.set(shot.name, Math.atan2(cam.x - spot.pos[0], cam.z - spot.pos[1]));
-    }
-    return yawCache.get(shot.name);
-  }
-
-  function mouthOpen(t) {
-    if (!lipsync) return 0;
-    for (const c of lipsync.clips) {
-      const i = Math.floor((t - c.at) * lipsync.fps);
-      if (i >= 0 && i < c.values.length) return c.values[i];
-    }
-    return 0;
-  }
-
-  /** 依時間 t 擺好姿勢；camera 用來讓頭轉向鏡頭 */
+  /** 依時間 t 擺好姿勢；camera 用來讓頭轉向鏡頭。回傳這一格的姿勢（給道具用） */
   function update(t, camera) {
-    const shot = CAMERA_PATH.find((s) => t >= s.start && t < s.end);
-    const spot = shot && GUIDE.spots[shot.name];
-    root.visible = !!spot;
-    if (!spot) return;
-    const u = t - shot.start;
-    const idx = shotIndex.get(shot.name);
+    const p = motion.pose(t);
+    root.visible = !!p;
+    if (!p) return null;
 
-    root.position.set(spot.pos[0], 0, spot.pos[1]);
-    const yaw = bodyYaw(shot, spot);
-    root.rotation.y = yaw;
+    root.position.set(p.root.x, 0, p.root.z);
+    root.rotation.set(0, p.root.yaw, 0);
+    root.updateMatrixWorld(true);
+    root.getWorldQuaternion(rootQ);
+
+    // 軀幹：髖部位移／旋轉、脊椎前傾＋呼吸、重心微晃
+    const br = Math.sin((2 * Math.PI * t) / 3.8);
+    const sway = 0.018 * Math.sin((2 * Math.PI * t) / 5.3);
+    hips.position.set(p.hips.x, HIP_Y + p.hips.y, p.hips.z);
+    hips.rotation.set(p.hipsRot.x, p.hipsRot.y, p.hipsRot.z + sway);
+    chest.scale.set(1 + 0.006 * br, 1 + 0.004 * br, 1 + 0.01 * br);
+    chest.rotation.set(p.spine.x, p.spine.y, p.spine.z - sway * 0.8);
     root.updateMatrixWorld(true);
 
-    // 呼吸、重心微晃
-    const br = Math.sin((2 * Math.PI * t) / 3.8);
-    chest.scale.set(1 + 0.006 * br, 1 + 0.004 * br, 1 + 0.01 * br);
-    hips.rotation.z = 0.018 * Math.sin((2 * Math.PI * t) / 5.3 + idx);
-    chest.rotation.z = -0.014 * Math.sin((2 * Math.PI * t) / 5.3 + idx);
-    legs[0].leg.rotation.z = -hips.rotation.z;
-    legs[1].leg.rotation.z = -hips.rotation.z;
+    // 腿：IK 到腳踝
+    legs.forEach((l, i) => {
+      const J = root.worldToLocal(wp(l.leg));
+      const sol = solveTwoBone(J, p.feet[i], dims.thigh, dims.shin, V(0, 0, -1));
+      setBodyQuat(l.leg, quatMap(A0, LEG_B0, sol.dir, sol.bend));
+      l.knee.rotation.set(sol.beta, 0, 0);
+    });
 
-    // 頭轉向攝影機（有角度上限）
-    const local = root.worldToLocal(camera.position.clone());
-    const hy = clamp(Math.atan2(local.x, local.z), -0.75, 0.75);
-    const hp = clamp(Math.atan2(local.y - 1.55, Math.hypot(local.x, local.z)), -0.35, 0.3);
+    // 手：rest／aim／reach，用 w 和自然下垂混合
+    arms.forEach((a, i) => {
+      const h = p.hands[i];
+      let q = restQ[i], beta = 0.12, twist = 0;
+      if (h.kind === 'aim') {
+        q = quatMap(A0, ARM_B0, h.dir, h.bend);
+        beta = h.elbow; twist = h.twist ?? 0;
+      } else if (h.kind === 'reach') {
+        const sol = solveTwoBone(root.worldToLocal(wp(a.arm)), h.target, dims.upper, dims.fore, h.hint);
+        q = quatMap(A0, ARM_B0, sol.dir, sol.bend);
+        beta = sol.beta; twist = h.twist ?? 0;
+      }
+      const w = h.kind === 'rest' ? 0 : (h.w ?? 1);
+      setBodyQuat(a.arm, restQ[i].clone().slerp(q, w));
+      a.elbow.rotation.set(-(0.12 + (beta - 0.12) * w), 0, 0);
+      a.wrist.rotation.set(0, a.side * twist * w, 0);
+    });
+
+    // 頭：看鏡頭或手上的東西（有角度上限）
+    let look = camera.position.clone();
+    if (p.look === 'mix') look = p.lookAt.clone().lerp(camera.position, p.lookWeight);
+    else if (p.look !== 'camera') look = p.look.clone();
+    const local = root.worldToLocal(look);
+    const hy = clamp(Math.atan2(local.x, local.z) - p.spine.y, -0.75, 0.75);
+    const hp = clamp(Math.atan2(local.y - 1.55 - p.hips.y, Math.hypot(local.x, local.z)), -0.6, 0.3) + p.spine.x * 0.6;
     neck.rotation.set(-hp * 0.35, hy * 0.35, 0);
-    headRig.head.rotation.set(-hp * 0.65, hy * 0.65, 0.04 * Math.sin(t * 0.9 + idx));
+    headRig.head.rotation.set(-hp * 0.65, hy * 0.65, 0.04 * Math.sin(t * 0.9));
 
     // 眨眼
-    const ph = ((t / 3.3 + idx * 0.37) % 1 + 1) % 1;
+    const ph = ((t / 3.3) % 1 + 1) % 1;
     const blink = ph < 0.035 ? 0.12 : 1;
     for (const e of headRig.eyes) e.scale.y = blink;
 
     // 說話嘴型
-    const open = mouthOpen(t);
+    const open = lipsyncAt(lipsync, t);
     headRig.mouth.scale.y = 0.0025 + open * 0.0075;
     headRig.mouth.scale.x = 0.017 - open * 0.003;
-
-    // 手勢（進場、退場都平滑）
-    const env = smooth((u - 0.35) / 0.7) * smooth((shot.end - t - 0.25) / 0.6);
-    let gArm = -1, gQ = null, elbowBend = 0, wristTwist = 0;
-    if (spot.gesture === 'wave') {
-      gArm = 0;                                            // 右手
-      gQ = aim(V(-0.6, -0.15, 0.35), V(0, 1, 0.2));
-      elbowBend = 1.75 + 0.3 * Math.sin(2 * Math.PI * 1.7 * u);     // 前臂往上舉、左右擺
-    } else if (spot.gesture === 'present' && spot.target) {
-      const tl = root.worldToLocal(V(...spot.target));
-      gArm = tl.x < 0 ? 0 : 1;
-      const sh = V(arms[gArm].side * 0.188, 1.385, 0);
-      const d = tl.sub(sh);
-      const horiz = Math.hypot(d.x, d.z);
-      gQ = aim(V(d.x / horiz * 0.5, -0.82, d.z / horiz * 0.5 + 0.3), V(d.x / horiz, 0.6, d.z / horiz + 0.4));
-      elbowBend = 0.75;                                    // 手肘彎、前臂往前，像在說「請看這邊」
-      wristTwist = arms[gArm].side * 1.2;                  // 掌心朝上
-    }
-    arms.forEach((a, i) => {
-      if (i === gArm && gQ) {
-        a.arm.quaternion.copy(restQ[i]).slerp(gQ, env);
-        // 手肘彎曲：繞手臂自己的 z 軸（往身體前上方彎）
-        a.elbow.rotation.set(-elbowBend * env, 0, 0);
-        a.wrist.rotation.set(0, wristTwist * env, 0);
-      } else {
-        a.arm.quaternion.copy(restQ[i]);
-        a.elbow.rotation.set(-0.12, 0, 0);
-        a.wrist.rotation.set(0, 0, 0);
-      }
-    });
+    root.updateMatrixWorld(true);
+    return p;
   }
 
   return {
     root,
     update,
     setLipsync(data) { lipsync = data; },
+    /** 手的世界座標（道具用：鍋鏟握在手上） */
+    handWorld: (i) => wp(arms[i].wrist).add(new THREE.Vector3(0, -0.06, 0).applyQuaternion(arms[i].wrist.getWorldQuaternion(new THREE.Quaternion()))),
   };
 }

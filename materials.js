@@ -210,13 +210,14 @@ export const M = {
   fabricGreyThrow:  std(0x63666b, 1.0),             // 深灰針織毯
   fabricBrownKnit:  std(0x7f624d, 1.0),             // 焦糖色針織床旗
   fabricTaupe:      std(0x6f6460, 1.0),             // 灰褐抱枕
-  sheerCurtain:     new THREE.MeshStandardMaterial({ color: 0xf6f3ee, roughness: 1, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }), // 白紗簾
+  // 白紗簾：窗外光透過來，自己微微發亮（實拍照片裡紗簾是畫面最亮的地方之一）
+  sheerCurtain:     new THREE.MeshStandardMaterial({ color: 0xf6f3ee, roughness: 1, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, emissive: 0xfff3e4, emissiveIntensity: 0.5 }),
   marbleWhite:      std(0xffffff, 0.2, 0, { ...withMap(marbleTexture()), color: HAS_DOM ? 0xffffff : 0xf0eeea }), // 白大理石（餐桌、茶几）
   glassBlack:       std(0x141414, 0.06, 0.1),       // 廚房黑玻璃背牆
   marbleTileWall:   std(0xffffff, 0.25, 0, { ...withMap(marbleTexture()), color: HAS_DOM ? 0xffffff : 0xeeece8 }), // 大板白大理石紋壁磚
   stoneTileWall:    std(0x958f86, 0.45),            // 浴室灰褐石紋壁磚
   windowFrame:      std(0x4a4542, 0.5, 0.5),        // 深古銅鋁窗框
-  blindSlat:        std(0xe9e4dc, 0.6),             // 百葉簾葉片
+  blindSlat:        std(0xe9e4dc, 0.6, 0, { emissive: 0xfff1e0, emissiveIntensity: 0.32 }),   // 百葉簾葉片（背光透亮）
   glassBronze:      new THREE.MeshStandardMaterial({ color: 0xb49a78, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.6, depthWrite: false }), // 茶色玻璃拉門
   doorCharcoal:     std(0x3d3937, 0.65),            // 大門深炭灰木紋
   metalGold:        std(0xcfae6a, 0.3, 1.0),        // 金色金屬（餐桌腳）

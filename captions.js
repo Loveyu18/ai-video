@@ -106,11 +106,32 @@ function roomCaption(ctx, w, h, shot, t) {
   ctx.restore();
 }
 
-/** 在 2D context 上畫出時間 t 的所有字卡（不清畫布，呼叫端決定底圖） */
-export function drawCaptions(ctx, t, w, h) {
+/**
+ * 在 2D context 上畫出時間 t 的所有字卡（不清畫布，呼叫端決定底圖）
+ * endingSub：取代片尾副標（例如用了 VRM 角色時，改成註明角色出處）
+ */
+export function drawCaptions(ctx, t, w, h, endingSub = null) {
   titleCard(ctx, w, h, VIDEO.title, t);
-  titleCard(ctx, w, h, VIDEO.ending, t);
+  titleCard(ctx, w, h, endingSub ? { ...VIDEO.ending, sub: endingSub } : VIDEO.ending, t);
   for (const shot of CAMERA_PATH) {
     if (shot.caption && t >= shot.start && t < shot.end) roomCaption(ctx, w, h, shot, t);
   }
+}
+
+/**
+ * 影格表用的標記（tools/sheet.mjs）：左上角印時間、鏡頭名稱；轉場中改成橘底並印「A→B」
+ * state：camera.cameraAt(t) 的結果
+ */
+export function drawStamp(ctx, t, state, w) {
+  const s = w / 1920;
+  const text = `${t.toFixed(2)}s  ${state.transition ?? state.shot}`;
+  ctx.save();
+  ctx.font = `600 ${56 * s}px ${FONT}`;
+  ctx.textBaseline = 'top';
+  const pad = 16 * s;
+  ctx.fillStyle = state.transition ? 'rgba(214, 110, 30, 0.85)' : 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(0, 0, ctx.measureText(text).width + pad * 2, 56 * s + pad * 2);
+  ctx.fillStyle = `rgb(${WARM_WHITE})`;
+  ctx.fillText(text, pad, pad);
+  ctx.restore();
 }

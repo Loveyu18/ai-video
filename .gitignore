@@ -4,3 +4,7 @@ output/*
 !output/soundtrack.mp3
 !output/lipsync.json
 image/
+# 角色模型（VRoid 匯出，授權設定不允許再散布，只在本機輸出影片用）
+avatar/
+# 本人錄音（聲音複製參考，不公開）
+voice-ref/

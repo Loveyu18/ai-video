@@ -12,8 +12,8 @@
       const local = ['localhost', '127.0.0.1'].includes(location.hostname);
       const cdn = 'https://cdn.jsdelivr.net/npm/';
       const src = local
-        ? { three: './node_modules/three/', bvh: './node_modules/three-mesh-bvh/', pt: './node_modules/three-gpu-pathtracer/' }
-        : { three: cdn + 'three@0.160.0/', bvh: cdn + 'three-mesh-bvh@0.7.8/', pt: cdn + 'three-gpu-pathtracer@0.0.20/' };
+        ? { three: './node_modules/three/', bvh: './node_modules/three-mesh-bvh/', pt: './node_modules/three-gpu-pathtracer/', vrm: './node_modules/@pixiv/three-vrm/' }
+        : { three: cdn + 'three@0.160.0/', bvh: cdn + 'three-mesh-bvh@0.7.8/', pt: cdn + 'three-gpu-pathtracer@0.0.20/', vrm: cdn + '@pixiv/three-vrm@3.5.5/' };
       const map = {
         imports: {
           three: src.three + 'build/three.module.js',
@@ -21,6 +21,7 @@
           'three/examples/jsm/': src.three + 'examples/jsm/',
           'three-mesh-bvh': src.bvh + 'build/index.module.js',
           'three-gpu-pathtracer': src.pt + 'build/index.module.js',
+          '@pixiv/three-vrm': src.vrm + 'lib/three-vrm.module.js',
         },
       };
       const s = document.createElement('script');

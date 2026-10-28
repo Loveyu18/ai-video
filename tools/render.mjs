@@ -16,6 +16,8 @@ const opt = (name, def) => {
   const a = args.find((x) => x.startsWith(`--${name}=`));
   return a ? Number(a.split('=')[1]) : def;
 };
+// --query=cam=x,y,z&look=x,y,z：額外的網址參數（例如固定鏡頭近拍導覽員）
+const query = args.find((a) => a.startsWith('--query='))?.slice('--query='.length);
 const out = path.resolve(args.find((a) => !a.startsWith('--')) ?? 'output/tour.mp4');
 const total = Math.round(VIDEO.duration * VIDEO.fps);
 const from = opt('from', 0);
@@ -67,6 +69,7 @@ const ffmpeg = spawn('ffmpeg', [
 ], { stdio: ['pipe', 'inherit', 'inherit'] });
 
 let expected = from;
+let lastFrame = Date.now();
 let browser;
 const t0 = Date.now();
 let resolveDone;
@@ -85,6 +88,7 @@ const server = await startServer(0, (req, res) => {
       const i = Number(url.searchParams.get('i'));
       if (i !== expected) { console.error(`\n畫格順序錯誤：收到 ${i}，預期 ${expected}`); process.exit(1); }
       expected++;
+      lastFrame = Date.now();
       const ok = ffmpeg.stdin.write(buf);
       const reply = () => res.writeHead(204).end();
       ok ? reply() : ffmpeg.stdin.once('drain', reply);
@@ -111,7 +115,7 @@ const server = await startServer(0, (req, res) => {
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'render-'));
 const pt = opt('pt', 0);
-const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}${pt ? `&pt=${pt}` : ''}${args.includes('--noguide') ? '&noguide=1' : ''}`;
+const url = `http://127.0.0.1:${server.address().port}/index.html?render=1&from=${from}&to=${to}${pt ? `&pt=${pt}` : ''}${args.includes('--noguide') ? '&noguide=1' : ''}${query ? `&${query}` : ''}`;
 console.log(`輸出 ${out}\n格 ${from}~${to}（共 ${to - from} 格，${VIDEO.width}×${VIDEO.height} @ ${VIDEO.fps}fps）`);
 browser = execFile(browserPath, [
   '--headless=new', '--hide-scrollbars', '--mute-audio',
@@ -122,7 +126,15 @@ browser = execFile(browserPath, [
 ], { maxBuffer: 64 * 1024 * 1024 });
 if (process.env.RENDER_DEBUG) browser.stderr.on('data', (d) => { const t = d.toString(); if (/CONSOLE|ERROR|WebGL|shader/i.test(t)) process.stderr.write(t); });
 
+// 看門狗：頁面的模組載入失敗時不會回報錯誤，3 分鐘沒收到新畫格就當作卡住
+const watchdog = setInterval(() => {
+  if (Date.now() - lastFrame < 180000) return;
+  console.error(`\n3 分鐘沒有收到新畫格（停在第 ${expected} 格），可能是頁面載入失敗。用 RENDER_DEBUG=1 看瀏覽器訊息。`);
+  browser.kill();
+  process.exit(1);
+}, 5000);
 await done;
+clearInterval(watchdog);
 browser.kill();
 server.close();
 ffmpeg.stdin.end();

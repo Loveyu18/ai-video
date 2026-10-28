@@ -32,7 +32,7 @@ execFile(browser, [
   '--headless=new', '--disable-gpu-sandbox',
   ...(process.env.SHOT_CPU ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--enable-gpu', '--ignore-gpu-blocklist']),
   '--hide-scrollbars', `--user-data-dir=${profile}`, `--window-size=${size}`,
-  '--virtual-time-budget=20000', `--screenshot=${out}`, url,
+  `--virtual-time-budget=${process.env.SHOT_WAIT ?? 20000}`,`--screenshot=${out}`, url,
 ], { timeout: 120000 }, (err) => {
   server.close();
   try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}

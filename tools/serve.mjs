@@ -1,4 +1,4 @@
-// 本機靜態伺服器：node tools/serve.mjs [port]  → http://localhost:5173/
+// 本機靜態伺服器：node tools/serve.mjs [port]  → http://localhost:5317/
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +24,6 @@ export function startServer(port = 0, extra = null) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const server = await startServer(Number(process.argv[2] ?? 5173));
+  const server = await startServer(Number(process.argv[2] ?? 5317));
   console.log(`http://localhost:${server.address().port}/`);
 }
