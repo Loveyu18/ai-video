@@ -43,7 +43,7 @@ import { drawCaptions, drawStamp } from './captions.js';
 import { createGuide } from './guide.js';
 import { createRoomProbes } from './probes.js';
 import { createProps } from './guide-props.js';
-import { showLanding, createPlayer } from './ui.js';
+import { showLanding, createPlayer, createWalkHud } from './ui.js';
 
 export const AREAS = ['living', 'masterBed', 'secondBed', 'kitchen', 'bathroom', 'balcony', 'entrance', 'smallRoom', 'hall'];
 
@@ -133,8 +133,8 @@ for (const id of AREAS) {
 const props = createProps(scene);
 scene.add(props.root);
 /** 擺好第 t 秒的導覽員和道具 */
-function stepGuide(t, cam) {
-  const pose = guide.update(t, cam);
+function stepGuide(t, cam, poseIn) {
+  const pose = guide.update(t, cam, poseIn);   // poseIn：自由走動模式直接給姿勢，不給就照劇本
   props.update(t, pose, guide);
   return pose;
 }
@@ -197,7 +197,8 @@ const setRenderSize = (w, h, ratio) => {
 const forceFast = params.get('quality') === 'fast';
 const draw = (hq = true) => (((hq && !forceFast) || !fast) ? full : fast).c.render();
 // 瀏覽時解析度上限 1.5 倍（高 DPI 螢幕 2 倍的像素量是 1.5 倍的 1.8 倍）
-const viewRatio = () => Math.min(devicePixelRatio, 1.5);
+// 手機、平板（觸控）再降到 1.25 倍：手機螢幕常是 3 倍密度，顯示晶片卻弱很多
+const viewRatio = () => Math.min(devicePixelRatio, matchMedia('(pointer: coarse)').matches ? 1.25 : 1.5);
 setRenderSize(innerWidth, innerHeight, viewRatio());
 
 // —— 鳥瞰時要隱藏的物件（天花、屋頂、嵌燈） ——
@@ -354,6 +355,33 @@ if (params.has('bench')) {
   }
   await fetch('/done', { method: 'POST', body: JSON.stringify({ errors }) });
   finish();
+} else if (params.has('walk')) {
+  // ═══ 自由走動（freeroam.js）：WASD 操作導覽員、滑鼠轉視角 ═══
+  const { startFreeRoam } = await import('./freeroam.js');
+  const roam = startFreeRoam({
+    scene, camera, renderer, guide, props, stepGuide, lightFor, ceilingObjects, aerialObjects, hud: createWalkHud(),
+  });
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    setRenderSize(innerWidth, innerHeight, viewRatio());
+    hqDone = false;
+  });
+  // 畫質：先用完整畫質量 20 格，夠快就一直用；不夠快就「動的時候快速畫質、停下 0.3 秒補一張完整畫質，然後暫停重畫」
+  let probe = [], lastNow = 0, fastEnough = true, hqDone = false, frames = 0;
+  renderer.setAnimationLoop((nowMs) => {
+    const active = roam.update();
+    if (probe) {
+      if (lastNow) probe.push(nowMs - lastNow);
+      lastNow = nowMs;
+      if (probe.length >= 20) { fastEnough = probe.sort((a, b) => a - b)[10] < 34; probe = null; }
+    }
+    const idle = !active && performance.now() - roam.lastInput() > 300;
+    if (fastEnough || probe) draw(true);
+    else if (!idle) { draw(false); hqDone = false; }
+    else if (!hqDone) { draw(true); hqDone = true; }
+    if (++frames === 1) finish();
+  });
 } else if (timeline) {
   // ═══ 預覽：?t= 停在某一秒；?play=1 即時播放 ═══
   let t0 = Number(params.get('t') ?? 0);

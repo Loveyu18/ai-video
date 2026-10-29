@@ -320,9 +320,12 @@ export function createGuide() {
   const wp = (o) => o.getWorldPosition(new THREE.Vector3());
   let lipsync = null;
 
-  /** 依時間 t 擺好姿勢；camera 用來讓頭轉向鏡頭。回傳這一格的姿勢（給道具用） */
-  function update(t, camera) {
-    const p = motion.pose(t);
+  /**
+   * 依時間 t 擺好姿勢；camera 用來讓頭轉向鏡頭。回傳這一格的姿勢（給道具用）
+   * poseIn：直接給姿勢（自由走動模式），不給就照劇本
+   */
+  function update(t, camera, poseIn) {
+    const p = poseIn === undefined ? motion.pose(t) : poseIn;
     root.visible = !!p;
     if (!p) return null;
 
@@ -392,6 +395,7 @@ export function createGuide() {
   return {
     root,
     update,
+    motion,
     setLipsync(data) { lipsync = data; },
     /** 手的世界座標（道具用：鍋鏟握在手上） */
     handWorld: (i) => wp(arms[i].wrist).add(new THREE.Vector3(0, -0.06, 0).applyQuaternion(arms[i].wrist.getWorldQuaternion(new THREE.Quaternion()))),

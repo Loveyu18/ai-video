@@ -175,12 +175,20 @@ export function createMotion(dims) {
     const prevYaw = acts[acts.indexOf(e) - 1]?.yaw ?? yaw;
     yaw = lerpAngle(prevYaw, yaw, smooth(tau / 0.5));
     const p = standing([pt.x, pt.z], yaw);
-
-    // 步伐：步數取整數，讓整段剛好走完；腳在支撐期固定在地上（相對身體往後移）
+    // 步數取整數，讓整段剛好走完；起步、停步時步伐由小變大、由大變小
     const n = Math.max(1, Math.round(e.length / STEP));
-    const step = e.length / n;
+    gait(p, s, smooth(Math.min(tau, T - tau) / 0.35), e.length / n);
+    // 走路時看前方
+    p.look = V(pt.x + Math.sin(yaw) * 3, 1.5, pt.z + Math.cos(yaw) * 3);
+    return p;
+  }
+
+  /**
+   * 步伐：走了 s 公尺時兩腳、髖部、手臂的擺動（k＝步伐大小 0~1，step＝一步長）
+   * 腳在支撐期固定在地上（相對身體往後移），所以不會滑步
+   */
+  function gait(p, s, k, step = STEP) {
     const phase = s / (2 * step);
-    const k = smooth(Math.min(tau, T - tau) / 0.35);     // 起步、停步時步伐由小變大、由大變小
     const swingArm = [];
     for (let i = 0; i < 2; i++) {
       const ph = ((phase + (i === 0 ? 0.5 : 0)) % 1 + 1) % 1;
@@ -204,10 +212,8 @@ export function createMotion(dims) {
     p.spine.y = -0.09 * Math.sin(2 * Math.PI * phase) * k;
     for (let i = 0; i < 2; i++) {
       const sd = i === 0 ? -1 : 1;
-      p.hands[i] = { kind: 'aim', w: 1, dir: V(sd * 0.16, -1, 0.3 * swingArm[i]), bend: V(0, 0, 1), elbow: 0.25 + 0.12 * Math.max(0, swingArm[i]), twist: 0 };
+      p.hands[i] = { kind: 'aim', w: k, dir: V(sd * 0.16, -1, 0.3 * swingArm[i]), bend: V(0, 0, 1), elbow: 0.25 + 0.12 * Math.max(0, swingArm[i]), twist: 0 };
     }
-    // 走路時看前方，鏡頭在前面時才看鏡頭
-    p.look = V(pt.x + Math.sin(yaw) * 3, 1.5, pt.z + Math.cos(yaw) * 3);
     return p;
   }
 
@@ -291,7 +297,7 @@ export function createMotion(dims) {
     const u = t - e.t0;
     const yaw = lerpAngle(e.yawIn, e.yaw, smooth(u / 0.5));
     const p = standing(e.at, yaw);
-    const off = doorSlide(acts, t);
+    const off = e.offsetAt ? e.offsetAt(t) : doorSlide(acts, t);   // 自由走動模式由玩家控制拉門
     const w = smooth((u - 0.1) / 0.45) * smooth((e.t1 - t - 0.15) / 0.4);
     reach(p, e.hand ?? 0, [e.handle[0] + off, e.handle[1], e.handle[2]], w, V(0, 0.2, 1), 1.4);
     p.spine.x = 0.06 * w;
@@ -344,5 +350,15 @@ export function createMotion(dims) {
     },
     /** 劇本外（還沒開始、已結束）時道具的狀態，例如拉門保持打開 */
     doorSlide: (t) => doorSlide(acts, t),
+
+    // —— 給自由走動模式（freeroam.js）用的積木 ——
+    /** 站姿 */
+    standing,
+    /** 走了 s 公尺、步伐大小 k 的步態，直接改 p */
+    gait,
+    /** 一步的長度（依腿長縮放） */
+    step: STEP,
+    /** 單一動作（劇本格式的物件，需有 t0、t1、yaw、yawIn）在 t 秒的姿勢 */
+    actPose: (e, t) => POSE[e.do](e, t),
   };
 }

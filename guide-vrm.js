@@ -268,13 +268,25 @@ export async function createVrmGuide(url) {
   const VISEMES = [['ou', 0.15], ['oh', 0.32], ['aa', 0.5], ['ee', 0.66], ['ih', 0.82]];
   const em = vrm.expressionManager;
 
-  /** 依時間 t 擺好姿勢，回傳這一格的姿勢（給道具用；不在劇本時間內回傳 null） */
-  function update(t, camera) {
-    const p = motion.pose(t);
+  /**
+   * 依時間 t 擺好姿勢，回傳這一格的姿勢（給道具用；不在劇本時間內回傳 null）
+   * poseIn：直接給姿勢（自由走動模式）；這時彈簧骨照實際經過的時間模擬，不追求逐格相同
+   */
+  let lastT = null;
+  function update(t, camera, poseIn) {
+    const live = poseIn !== undefined;
+    const p = live ? poseIn : motion.pose(t);
     root.visible = !!p;
     if (!p) { simN = null; return null; }
-    simulate(Math.floor(t * SIM_FPS + 1e-6));
-    const look = applyPose(p, t, camera);
+    let look;
+    if (live) {
+      look = applyPose(p, t, camera);
+      if (springs) springs.update(lastT === null ? 1 / 60 : clamp(t - lastT, 0, 1 / 20));
+      lastT = t;
+    } else {
+      simulate(Math.floor(t * SIM_FPS + 1e-6));
+      look = applyPose(p, t, camera);
+    }
 
     // 眨眼：約 3.3 秒一次，閉眼 0.12 秒
     const ph = ((t / 3.3) % 1 + 1) % 1;
@@ -305,6 +317,7 @@ export async function createVrmGuide(url) {
   return {
     root,
     update,
+    motion,
     setLipsync(data) { lipsync = data; },
     /** 手腕的世界座標（道具用：鍋鏟握在手上） */
     handWorld: (i) => wp(B.hand[i]),

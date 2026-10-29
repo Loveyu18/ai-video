@@ -2,10 +2,10 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <title>Warm Home · 室內設計 3D 導覽</title>
   <meta name="description" content="全程式生成的室內設計 3D 導覽：無模型、無貼圖、無照片，用 three.js 即時渲染。" />
-  <style>html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1712; }</style>
+  <style>html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1712; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }</style>
   <script>
     // 本機開發用 node_modules；放到網站（GitHub Pages）時改從 CDN 載入，版本與 package.json 一致
     (() => {
