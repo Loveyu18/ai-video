@@ -4,7 +4,7 @@
  *   播放頁：點「開始導覽」才開始（瀏覽器規定要點一下才能出聲），影片時間跟著音軌走
  * 開發用的網址參數（?t=、?room=、?render= …）不顯示這些介面。
  */
-import { CAMERA_PATH, VIDEO } from './layout.js';
+import { CAMERA_PATH, VIDEO, ROOMS, WALLS, DOORS, WINDOWS, BOUNDS, wallAxis, wallThickness, roomAt } from './layout.js';
 
 const css = `
 .ui-panel { position: fixed; left: 50%; bottom: 7vh; transform: translateX(-50%); width: min(560px, calc(100vw - 32px));
@@ -67,6 +67,139 @@ export function showLanding() {
 }
 
 /**
+ * 小平面圖（自由走動模式右上角）：房間、牆、門洞、窗都從 layout.js 畫；
+ * 目前所在的房間會亮起來並顯示名稱，箭頭＝角色位置與面向，淡色扇形＝鏡頭看的方向。
+ * 點一下或按 M 放大／縮小。
+ */
+function createMinimap(touch) {
+  const PAD = 0.35;                                   // 平面圖四周留白（公尺）
+  const W_M = BOUNDS.x1 - BOUNDS.x0 + PAD * 2, H_M = BOUNDS.z1 - BOUNDS.z0 + PAD * 2;
+  const wrap = el(`<div style="position:fixed;top:16px;right:16px;z-index:3;cursor:pointer;touch-action:none;
+    background:rgba(36,26,18,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:14px;
+    padding:8px 8px 6px;box-shadow:0 6px 24px rgba(0,0,0,.25);transition:opacity .2s ease"></div>`);
+  const canvas = document.createElement('canvas');
+  canvas.style.display = 'block';
+  const label = el(`<div style="color:#fff8ee;font:13px 'Microsoft JhengHei','PingFang TC',sans-serif;letter-spacing:.1em;
+    text-align:center;padding-top:5px;white-space:nowrap"></div>`);
+  wrap.append(canvas, label);
+  document.body.append(wrap);
+
+  let big = false, base = null, scale = 1, dpr = 1;
+  const toPx = (x, z) => [(x - BOUNDS.x0 + PAD) * scale, (z - BOUNDS.z0 + PAD) * scale];
+
+  /** 不會變的部分（房間、牆、門、窗）先畫在另一張畫布上 */
+  function drawBase() {
+    const cssW = big ? Math.min(360, innerWidth - 32) : (touch ? 132 : 190);
+    scale = cssW / W_M;
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = Math.round(cssW * dpr), h = Math.round(H_M * scale * dpr);
+    canvas.width = w; canvas.height = h;
+    canvas.style.width = `${cssW}px`; canvas.style.height = `${H_M * scale}px`;
+    base = document.createElement('canvas');
+    base.width = w; base.height = h;
+    const g = base.getContext('2d');
+    g.scale(dpr, dpr);
+    // 房間
+    for (const [id, r] of Object.entries(ROOMS)) {
+      const [x0, z0] = toPx(r.rect.x0, r.rect.z0), [x1, z1] = toPx(r.rect.x1, r.rect.z1);
+      g.fillStyle = id === 'shaft' ? 'rgba(120,110,100,.5)' : id === 'balcony' ? 'rgba(214,226,214,.55)' : 'rgba(246,236,222,.88)';
+      g.fillRect(x0, z0, x1 - x0, z1 - z0);
+    }
+    // 牆
+    g.strokeStyle = '#4a3a2c';
+    g.lineCap = 'square';
+    for (const w of Object.values(WALLS)) {
+      g.lineWidth = Math.max(1.5, wallThickness(w) * scale);
+      g.beginPath();
+      g.moveTo(...toPx(...w.from));
+      g.lineTo(...toPx(...w.to));
+      g.stroke();
+    }
+    // 開口：窗畫淡藍、門擦掉牆（畫成地板色）
+    const along = (wallId, a, b) => {
+      const w = WALLS[wallId];
+      return wallAxis(w) === 'x' ? [[a, w.from[1]], [b, w.from[1]]] : [[w.from[0], a], [w.from[0], b]];
+    };
+    g.lineCap = 'butt';
+    for (const win of Object.values(WINDOWS ?? {})) {
+      const [p, q] = along(win.wall, win.from, win.to);
+      g.lineWidth = Math.max(1.5, wallThickness(WALLS[win.wall]) * scale * 0.6);
+      g.strokeStyle = '#9ec3d6';
+      g.beginPath(); g.moveTo(...toPx(...p)); g.lineTo(...toPx(...q)); g.stroke();
+    }
+    for (const d of Object.values(DOORS)) {
+      const [p, q] = along(d.wall, d.from, d.to);
+      g.lineWidth = Math.max(2, wallThickness(WALLS[d.wall]) * scale + 1);
+      g.strokeStyle = 'rgba(246,236,222,1)';
+      g.beginPath(); g.moveTo(...toPx(...p)); g.lineTo(...toPx(...q)); g.stroke();
+    }
+    // 放大時標房間名稱
+    if (big) {
+      g.fillStyle = 'rgba(74,58,44,.75)';
+      g.font = `${Math.max(10, scale * 0.28)}px 'Microsoft JhengHei','PingFang TC',sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      for (const [id, r] of Object.entries(ROOMS)) {
+        if (id === 'shaft' || id === 'corridor') continue;
+        const [cx, cz] = toPx((r.rect.x0 + r.rect.x1) / 2, (r.rect.z0 + r.rect.z1) / 2);
+        g.fillText(r.name, cx, cz);
+      }
+    }
+  }
+
+  let last = '';
+  /** x, z、角色面向 yaw、鏡頭 camYaw（鏡頭在角色的 camYaw 方向） */
+  function update(x, z, yaw, camYaw) {
+    const id = roomAt(x, z);
+    const key = `${x.toFixed(2)},${z.toFixed(2)},${yaw.toFixed(2)},${camYaw.toFixed(2)},${big}`;
+    if (key === last || !base) return;
+    last = key;
+    const g = canvas.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.drawImage(base, 0, 0);
+    g.scale(dpr, dpr);
+    // 目前的房間亮起來
+    if (id && ROOMS[id]) {
+      const r = ROOMS[id].rect;
+      const [x0, z0] = toPx(r.x0, r.z0), [x1, z1] = toPx(r.x1, r.z1);
+      g.fillStyle = 'rgba(255,190,110,.35)';
+      g.fillRect(x0, z0, x1 - x0, z1 - z0);
+    }
+    const [px, pz] = toPx(x, z);
+    // 鏡頭看的方向（扇形）：鏡頭往角色看，朝向 (-sin camYaw, -cos camYaw)
+    const look = Math.atan2(-Math.cos(camYaw), -Math.sin(camYaw));
+    g.fillStyle = 'rgba(255,248,238,.28)';
+    g.beginPath();
+    g.moveTo(px, pz);
+    g.arc(px, pz, scale * 1.6, look - 0.55, look + 0.55);
+    g.closePath();
+    g.fill();
+    // 角色：圓點＋箭頭指向面向（身體正面 (sin yaw, cos yaw)）
+    const a = Math.atan2(Math.cos(yaw), Math.sin(yaw));
+    const R = Math.max(5, scale * 0.22);
+    g.save();
+    g.translate(px, pz);
+    g.rotate(a);
+    g.fillStyle = '#e8743b';
+    g.strokeStyle = '#fff8ee';
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(R * 1.5, 0); g.lineTo(-R * 0.8, R * 0.9); g.lineTo(-R * 0.35, 0); g.lineTo(-R * 0.8, -R * 0.9);
+    g.closePath();
+    g.fill(); g.stroke();
+    g.restore();
+    label.textContent = id && ROOMS[id] ? `📍 ${ROOMS[id].name}` : '';
+  }
+
+  const toggle = () => { big = !big; drawBase(); last = ''; };
+  wrap.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); toggle(); });
+  addEventListener('keydown', (e) => { if (e.code === 'KeyM' && !e.repeat) toggle(); });
+  addEventListener('resize', () => { drawBase(); last = ''; });
+  drawBase();
+  return { update };
+}
+
+/**
  * 自由走動模式的畫面：左上回首頁、操作說明、互動提示
  *   觸控裝置（手機、平板）另外有左下虛擬搖桿、👋 按鈕，互動提示本身就是可以點的按鈕
  *   回傳 { setPrompt(動作文字), joy：搖桿向量 {x 右, y 前}, onAction(cb), onWave(cb), touch }
@@ -83,9 +216,9 @@ export function createWalkHud() {
     width:max-content;max-width:calc(100vw - 32px);white-space:normal;transition:opacity 1s ease;
     ${touch ? 'top:72px;bottom:auto;padding:6px 14px;border-radius:14px;background:rgba(36,26,18,.45);font-size:13px' : ''}">
     ${touch ? '左下搖桿 走動（推到底跑）・拖曳畫面 轉視角・雙指 遠近'
-    : '<b>W A S D</b> 走動　<b>Shift</b> 跑　<b>滑鼠拖曳</b> 轉視角　<b>滾輪</b> 遠近　<b>E</b> 互動　<b>Q</b> 揮手'}</div>`);
+    : '<b>W A S D</b> 走動　<b>Shift</b> 跑　<b>滑鼠拖曳</b> 轉視角　<b>滾輪</b> 遠近　<b>E</b> 互動　<b>Q</b> 揮手　<b>M</b> 平面圖'}</div>`);
   if (touch) setTimeout(() => { help.style.opacity = '0'; }, 8000);
-  const prompt = el(`<button type="button" style="position:fixed;left:50%;bottom:${touch ? 150 : 64}px;transform:translateX(-50%);
+  const prompt = el(`<button type="button" style="position:fixed;left:50%;bottom:${touch ? 52 : 64}px;transform:translateX(-50%);
     padding:${touch ? '14px 26px' : '10px 18px'};${pill};font-size:${touch ? 18 : 15}px;transition:opacity .15s ease;opacity:0;
     pointer-events:none;touch-action:none"></button>`);
   document.body.append(back, help, prompt);
@@ -133,10 +266,12 @@ export function createWalkHud() {
     document.body.append(base, waveBtn);
   }
 
+  const map = createMinimap(touch);
   let last = '';
   return {
     touch,
     joy,
+    map,
     onAction: (f) => handlers.action.push(f),
     onWave: (f) => handlers.wave.push(f),
     /** 顯示可以做的動作（例如「坐下」）；空字串＝隱藏。電腦版顯示「按 E …」，觸控版是可以點的按鈕 */

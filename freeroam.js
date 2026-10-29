@@ -39,7 +39,7 @@ function buildGrid(scene, skipRoots) {
       if (b.isEmpty() || (b.max.x - b.min.x) * (b.max.z - b.min.z) > 30) return;   // 天空、整片地板之類
       if (SLIDER.test(o.name)) { slider.push([o, b.clone(), o.position.x]); return; }
       const [i0, j0] = cellOf(b.min.x, b.min.z), [i1, j1] = cellOf(b.max.x, b.max.z);
-      const body = b.max.y > 0.08 && b.min.y < 1.6;
+      const body = b.max.y > 0.15 && b.min.y < 1.6;    // 15 公分以下（拖鞋、地毯、門檻）跨得過去，不算障礙
       for (let j = Math.max(0, j0); j <= Math.min(nz - 1, j1); j++) {
         for (let i = Math.max(0, i0); i <= Math.min(nx - 1, i1); i++) {
           if (body) raw[idx(i, j)] = 1;
@@ -406,7 +406,11 @@ export function startFreeRoam(ctx) {
     view.shown = free < view.shown ? free : view.shown + (free - view.shown) * Math.min(1, dt * 3);
     camera.position.copy(target).addScaledVector(dir, view.shown);
     camera.lookAt(target);
+    // 鏡頭被擠到離角色不到 0.5 公尺（窄走道、玄關）：先把角色藏起來，不然畫面只看到頭的內側
+    if (view.shown < 0.5) guide.root.visible = false;
     ctx.lightFor(camera.position, true);
+
+    hud.map?.update(me.x, me.z, me.yaw, view.yaw);
 
     // —— 提示 ——
     if (mode === 'free') {
