@@ -58,31 +58,47 @@ function buildGrid(scene, skipRoots) {
       if (!L.roomAt(x, z)) { raw[idx(i, j)] = 1; cam.set(idx(i, j), [[-10, 10]]); }
     }
   }
-  // 依角色半徑膨脹：中心點落在這些格子就代表身體會碰到
-  const body = new Uint8Array(nx * nz);
-  const r = Math.ceil(RADIUS / CELL);
+  // 每格離最近障礙物的距離（公尺，最多算到半徑多一點）：比「能不能站」多一個資訊，
+  // 動作結束時角色停在貼著家具的位置（離障礙物小於半徑），也能判斷「往外走」是在脫困
+  const MAXC = RADIUS + 0.1;
+  const clear = new Float32Array(nx * nz).fill(MAXC);
+  const w = Math.ceil(MAXC / CELL);
   for (let j = 0; j < nz; j++) {
     for (let i = 0; i < nx; i++) {
       if (!raw[idx(i, j)]) continue;
-      for (let dj = -r; dj <= r; dj++) {
-        for (let di = -r; di <= r; di++) {
-          if (di * di + dj * dj > r * r) continue;
+      for (let dj = -w; dj <= w; dj++) {
+        for (let di = -w; di <= w; di++) {
           const ii = i + di, jj = j + dj;
-          if (ii >= 0 && jj >= 0 && ii < nx && jj < nz) body[idx(ii, jj)] = 1;
+          if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
+          const d = Math.hypot(di, dj) * CELL;
+          if (d < clear[idx(ii, jj)]) clear[idx(ii, jj)] = d;
         }
       }
     }
   }
+  /** (x, z) 離最近障礙物多遠；off＝淋浴拉門目前的位移 */
+  function clearance(x, z, off = 0) {
+    const [i, j] = cellOf(x, z);
+    if (i < 0 || j < 0 || i >= nx || j >= nz) return 0;
+    let c = clear[idx(i, j)];
+    for (const [, b] of slider) {
+      const dx = Math.max(b.min.x + off - x, 0, x - b.max.x - off), dz = Math.max(b.min.z - z, 0, z - b.max.z);
+      c = Math.min(c, Math.hypot(dx, dz));
+    }
+    return c;
+  }
   return {
     slider,
-    /** 角色中心站在 (x, z) 會不會撞到東西；off＝淋浴拉門目前的位移 */
-    blocked(x, z, off = 0) {
-      const [i, j] = cellOf(x, z);
-      if (i < 0 || j < 0 || i >= nx || j >= nz || body[idx(i, j)]) return true;
-      for (const [, b] of slider) {
-        if (x > b.min.x + off - RADIUS && x < b.max.x + off + RADIUS && z > b.min.z - RADIUS && z < b.max.z + RADIUS) return true;
-      }
-      return false;
+    clearance,
+    /** 角色中心站在 (x, z) 身體會不會碰到東西 */
+    blocked: (x, z, off = 0) => clearance(x, z, off) < RADIUS,
+    /**
+     * 從 (x0, z0) 走到 (x1, z1) 可不可以：目的地夠空，或是沒有更靠近障礙物
+     * （從貼著家具的位置脫困：沿著沙發、床邊平行走開時距離不變，也要放行）
+     */
+    canMove(x0, z0, x1, z1, off = 0) {
+      const c1 = clearance(x1, z1, off);
+      return c1 >= RADIUS || (c1 > 0.02 && c1 >= clearance(x0, z0, off));
     },
     /** 鏡頭放在 p 會不會在牆或家具裡（鏡頭四周留 10 公分） */
     camBlocked(p) {
@@ -249,11 +265,25 @@ export function startFreeRoam(ctx) {
     }
   }
 
+  /** 離 (x, z) 最近、身體不會碰到東西的點（從 yaw 方向開始找）；原地就是空的回傳 null */
+  function nearestFree(x, z, yaw) {
+    if (!grid.blocked(x, z, doorOff)) return null;
+    for (let r = 0.05; r <= 0.8; r += 0.05) {
+      for (let k = 0; k < 16; k++) {
+        const a = yaw + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 8);   // 正前方、左右交替往外
+        const px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
+        if (grid.clearance(px, pz, doorOff) >= RADIUS + 0.01) return [px, pz];
+      }
+    }
+    return null;
+  }
+
   /** 走一步（會沿牆滑） */
   function step(dx, dz) {
-    if (!grid.blocked(me.x + dx, me.z + dz, doorOff)) { me.x += dx; me.z += dz; return true; }
-    if (!grid.blocked(me.x + dx, me.z, doorOff)) { me.x += dx; return true; }
-    if (!grid.blocked(me.x, me.z + dz, doorOff)) { me.z += dz; return true; }
+    const ok = (x, z) => grid.canMove(me.x, me.z, x, z, doorOff);
+    if (ok(me.x + dx, me.z + dz)) { me.x += dx; me.z += dz; return true; }
+    if (ok(me.x + dx, me.z)) { me.x += dx; return true; }
+    if (ok(me.x, me.z + dz)) { me.z += dz; return true; }
     return false;
   }
 
@@ -278,11 +308,14 @@ export function startFreeRoam(ctx) {
     if (mode === 'act') {
       // 走動鍵可以中斷「坐著／炒菜」（先起身）、揮手（立刻停）
       if ((f || r) && cur.t1 === Infinity) cur.t1 = t + (cur.out ?? 0.7);
-      if ((f || r) && cur.do === 'wave') cur.t1 = t;
+      if ((f || r) && (cur.do === 'wave' || cur.do === 'testWater')) cur.t1 = t;   // 揮手、試水溫：一走就停
       if (t >= cur.t1) {
         if (cur.doorTo !== undefined) doorOff = cur.doorTo;
         me.x = cur.at[0]; me.z = cur.at[1]; me.yaw = cur.yaw;
         mode = 'free'; cur = null;
+        // 起身後的站位通常貼著家具：自動往最近的空地踏一步（先試正前方），之後就是一般走動
+        const out = nearestFree(me.x, me.z, me.yaw);
+        if (out) { approach = { to: out }; mode = 'approach'; }
       } else {
         pose = motion.actPose(cur, t);
         const off = cur.offsetAt ? cur.offsetAt(t) : doorOff;
@@ -291,11 +324,11 @@ export function startFreeRoam(ctx) {
     }
 
     if (mode === 'approach') {
-      // 自動走到互動點的站位
-      const [ax, az] = approach.act.at;
+      // 自動走到互動點的站位（approach.act），或起身後踏到空地（approach.to，不能中斷，很短）
+      const [ax, az] = approach.to ?? approach.act.at;
       const d = Math.hypot(ax - me.x, az - me.z);
-      if (d < 0.02 || f || r) {
-        if (d < 0.02) { me.x = ax; me.z = az; startSpot(approach); }
+      if (d < 0.02 || ((f || r) && approach.act)) {
+        if (d < 0.02) { me.x = ax; me.z = az; if (approach.act) startSpot(approach); else mode = 'free'; }
         else mode = 'free';
         approach = null;
       } else {
