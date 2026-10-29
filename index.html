@@ -32,6 +32,12 @@
   </script>
 </head>
 <body>
+  <!-- 載入畫面：第一次要下載場景程式和角色模型（約 15MB），手機網路可能要十幾秒；main.js 畫出第一格後移除 -->
+  <div id="loading" style="position:fixed;inset:0;display:grid;place-items:center;color:#fff8ee;text-align:center;
+    font:15px 'Microsoft JhengHei','PingFang TC','Noto Sans TC',sans-serif;letter-spacing:.12em;line-height:2">
+    <div><div style="font-size:22px;font-weight:300;letter-spacing:.35em">WARM HOME</div>載入中…<br>
+      <span style="opacity:.6;font-size:12px">第一次開啟需要 10～20 秒</span></div>
+  </div>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

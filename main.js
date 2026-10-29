@@ -264,6 +264,7 @@ const timeline = params.has('t') || params.has('play') || params.has('render');
 const finish = () => {
   window.__ERRORS = errors;
   window.__READY = true;
+  document.getElementById('loading')?.remove();
   if (errors.length) document.title = 'ERRORS: ' + errors.join(' | ');
 };
 
